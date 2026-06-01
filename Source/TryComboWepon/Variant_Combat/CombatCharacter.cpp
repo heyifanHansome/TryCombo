@@ -22,6 +22,7 @@ ACombatCharacter::ACombatCharacter()
 
 	// bind the attack montage ended delegate
 	OnAttackMontageEnded.BindUObject(this, &ACombatCharacter::AttackMontageEnded);
+	OnWeaponModeMontageEnded.BindUObject(this, &ACombatCharacter::WeaponModeMontageEnded);
 
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(35.0f, 90.0f);
@@ -92,6 +93,11 @@ void ACombatCharacter::ToggleCamera()
 	BP_ToggleCamera();
 }
 
+void ACombatCharacter::ToggleWeaponModePressed()
+{
+	ToggleWeaponMode();
+}
+
 void ACombatCharacter::DoMove(float Right, float Forward)
 {
 	if (GetController() != nullptr)
@@ -124,6 +130,19 @@ void ACombatCharacter::DoLook(float Yaw, float Pitch)
 
 void ACombatCharacter::DoComboAttackStart()
 {
+	if (!bIsWeaponDrawn || bIsWeaponModeChanging)
+	{
+		CachedAttackInputTime = GetWorld()->GetTimeSeconds();
+		bQueuedWeaponModeChargedAttack = false;
+
+		if (bAutoDrawWeaponOnAttack && !bIsWeaponDrawn)
+		{
+			SetWeaponDrawn(true);
+		}
+
+		return;
+	}
+
 	// are we already playing an attack animation?
 	if (bIsAttacking)
 	{
@@ -142,10 +161,53 @@ void ACombatCharacter::DoComboAttackEnd()
 	// stub
 }
 
+// ==================== Codex新增：动态绑定连招Montage ====================
+void ACombatCharacter::SetComboAttackMontage(UAnimMontage* NewMontage)
+{
+	ComboAttackMontage = NewMontage;
+}
+
+// ==================== Codex新增：持剑/收刀模式切换入口 ====================
+void ACombatCharacter::SetWeaponDrawn(bool bNewWeaponDrawn)
+{
+	if (bIsWeaponModeChanging || bIsWeaponDrawn == bNewWeaponDrawn)
+	{
+		return;
+	}
+
+	PlayWeaponModeMontage(bNewWeaponDrawn);
+}
+
+// ==================== Codex新增：持剑/收刀模式取反 ====================
+void ACombatCharacter::ToggleWeaponMode()
+{
+	SetWeaponDrawn(!bIsWeaponDrawn);
+}
+
+// ==================== Codex新增：动态绑定拔刀/收刀Montage ====================
+void ACombatCharacter::SetWeaponModeMontages(UAnimMontage* NewDrawMontage, UAnimMontage* NewSheatheMontage)
+{
+	DrawWeaponMontage = NewDrawMontage;
+	SheatheWeaponMontage = NewSheatheMontage;
+}
+
 void ACombatCharacter::DoChargedAttackStart()
 {
 	// raise the charging attack flag
 	bIsChargingAttack = true;
+
+	if (!bIsWeaponDrawn || bIsWeaponModeChanging)
+	{
+		CachedAttackInputTime = GetWorld()->GetTimeSeconds();
+		bQueuedWeaponModeChargedAttack = true;
+
+		if (bAutoDrawWeaponOnAttack && !bIsWeaponDrawn)
+		{
+			SetWeaponDrawn(true);
+		}
+
+		return;
+	}
 
 	if (bIsAttacking)
 	{
@@ -181,6 +243,11 @@ void ACombatCharacter::ResetHP()
 
 void ACombatCharacter::ComboAttack()
 {
+	if (!ComboAttackMontage || !bIsWeaponDrawn || bIsWeaponModeChanging)
+	{
+		return;
+	}
+
 	// raise the attacking flag
 	bIsAttacking = true;
 
@@ -200,9 +267,92 @@ void ACombatCharacter::ComboAttack()
 		{
 			// set the end delegate for the montage
 			AnimInstance->Montage_SetEndDelegate(OnAttackMontageEnded, ComboAttackMontage);
+
+			if (ComboSectionNames.IsValidIndex(ComboCount) && ComboSectionNames[ComboCount] != NAME_None)
+			{
+				AnimInstance->Montage_JumpToSection(ComboSectionNames[ComboCount], ComboAttackMontage);
+			}
 		}
 	}
 
+}
+
+// ==================== Codex新增：播放拔刀/收刀Montage ====================
+void ACombatCharacter::PlayWeaponModeMontage(bool bDrawWeapon)
+{
+	bPendingWeaponDrawn = bDrawWeapon;
+	bIsWeaponModeChanging = true;
+
+	UAnimMontage* WeaponModeMontage = bDrawWeapon ? DrawWeaponMontage : SheatheWeaponMontage;
+	if (!WeaponModeMontage)
+	{
+		FinishWeaponModeTransition(false);
+		return;
+	}
+
+	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+	{
+		const float MontageLength = AnimInstance->Montage_Play(WeaponModeMontage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, true);
+		if (MontageLength > 0.0f)
+		{
+			AnimInstance->Montage_SetEndDelegate(OnWeaponModeMontageEnded, WeaponModeMontage);
+			return;
+		}
+	}
+
+	FinishWeaponModeTransition(true);
+}
+
+// ==================== Codex新增：拔刀/收刀结束后统一设置状态 ====================
+void ACombatCharacter::FinishWeaponModeTransition(bool bInterrupted)
+{
+	if (!bInterrupted)
+	{
+		bIsWeaponDrawn = bPendingWeaponDrawn;
+	}
+
+	bIsWeaponModeChanging = false;
+
+	if (bIsWeaponDrawn && CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= AttackInputCacheTimeTolerance)
+	{
+		CachedAttackInputTime = 0.0f;
+
+		if (bQueuedWeaponModeChargedAttack)
+		{
+			bQueuedWeaponModeChargedAttack = false;
+			ChargedAttack();
+		}
+		else
+		{
+			ComboAttack();
+		}
+	}
+}
+
+// ==================== Codex新增：拔刀/收刀Montage结束回调 ====================
+void ACombatCharacter::WeaponModeMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	FinishWeaponModeTransition(bInterrupted);
+}
+
+// ==================== Codex新增：跳转到当前段收刀Section ====================
+void ACombatCharacter::JumpToComboSheatheSection()
+{
+	if (!ComboAttackMontage || !ComboSheatheSectionNames.IsValidIndex(ComboCount))
+	{
+		return;
+	}
+
+	const FName SheatheSectionName = ComboSheatheSectionNames[ComboCount];
+	if (SheatheSectionName == NAME_None)
+	{
+		return;
+	}
+
+	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+	{
+		AnimInstance->Montage_JumpToSection(SheatheSectionName, ComboAttackMontage);
+	}
 }
 
 void ACombatCharacter::ChargedAttack()
@@ -236,7 +386,7 @@ void ACombatCharacter::AttackMontageEnded(UAnimMontage* Montage, bool bInterrupt
 	bIsAttacking = false;
 
 	// check if we have a non-stale cached input
-	if (GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= AttackInputCacheTimeTolerance)
+	if (CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= AttackInputCacheTimeTolerance)
 	{
 		// are we holding the charged attack button?
 		if (bIsChargingAttack)
@@ -299,30 +449,42 @@ void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 
 void ACombatCharacter::CheckCombo()
 {
-	// are we playing a non-charge attack animation?
+	CheckComboOrSheatheSection();
+}
+
+// ==================== Codex新增：连招继续/收刀判断核心逻辑 ====================
+void ACombatCharacter::CheckComboOrSheatheSection()
+{
+	// 只处理普通连招，不处理蓄力攻击
 	if (bIsAttacking && !bIsChargingAttack)
 	{
-		// is the last attack input not stale?
-		if (GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= ComboInputCacheTimeTolerance)
+		// 如果鼠标攻击输入还在有效缓存时间内，就进入下一段连招
+		if (CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= ComboInputCacheTimeTolerance)
 		{
-			// consume the attack input so we don't accidentally trigger it twice
+			// 消耗这次输入，避免同一次点击触发多次跳段
 			CachedAttackInputTime = 0.0f;
 
-			// increase the combo counter
+			// 进入下一段连招
 			++ComboCount;
 
-			// do we still have a combo section to play?
+			// 还有可播放的连招Section时，跳到下一段
 			if (ComboCount < ComboSectionNames.Num())
 			{
-				// notify enemies they are about to be attacked
+				// 通知敌人即将受到攻击
 				NotifyEnemiesOfIncomingAttack();
 
-				// jump to the next combo section
+				// 跳转到下一段连招Section
 				if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 				{
 					AnimInstance->Montage_JumpToSection(ComboSectionNames[ComboCount], ComboAttackMontage);
 				}
 			}
+		}
+		else
+		{
+			CachedAttackInputTime = 0.0f;
+			// 没有有效输入时，跳到当前段对应的收刀Section
+			JumpToComboSheatheSection();
 		}
 	}
 }
@@ -531,6 +693,9 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 		// Camera Side Toggle
 		EnhancedInputComponent->BindAction(ToggleCameraAction, ETriggerEvent::Triggered, this, &ACombatCharacter::ToggleCamera);
+
+		// Weapon Mode Toggle
+		EnhancedInputComponent->BindAction(ToggleWeaponModeAction, ETriggerEvent::Started, this, &ACombatCharacter::ToggleWeaponModePressed);
 	}
 }
 

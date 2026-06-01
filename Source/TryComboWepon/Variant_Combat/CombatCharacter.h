@@ -73,6 +73,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* ToggleCameraAction;
 
+	/** 【Codex新增】切换持剑/收刀状态的输入 */
+	UPROPERTY(EditAnywhere, Category ="Input")
+	UInputAction* ToggleWeaponModeAction;
+
 	/** Max amount of HP the character will have on respawn */
 	UPROPERTY(EditAnywhere, Category="Damage", meta = (ClampMin = 0, ClampMax = 100))
 	float MaxHP = 5.0f;
@@ -102,6 +106,32 @@ protected:
 
 	/** If true, the character is currently playing an attack animation */
 	bool bIsAttacking = false;
+
+	/** 【Codex新增】当前是否处于持剑/拔刀状态，AnimBP可以读取这个状态切换Locomotion */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Weapon Mode")
+	bool bIsWeaponDrawn = false;
+
+	/** 【Codex新增】当前是否正在播放拔刀/收刀过渡Montage */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Weapon Mode")
+	bool bIsWeaponModeChanging = false;
+
+	/** 【Codex新增】攻击时如果还没有持剑，是否先自动拔刀 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode")
+	bool bAutoDrawWeaponOnAttack = true;
+
+	/** 【Codex新增】拔刀Montage */
+	UPROPERTY(EditAnywhere, Category="Weapon Mode")
+	UAnimMontage* DrawWeaponMontage;
+
+	/** 【Codex新增】收刀Montage */
+	UPROPERTY(EditAnywhere, Category="Weapon Mode")
+	UAnimMontage* SheatheWeaponMontage;
+
+	/** 【Codex新增】拔刀/收刀目标状态，用于Montage结束后落状态 */
+	bool bPendingWeaponDrawn = false;
+
+	/** 【Codex新增】拔刀完成后是否继续执行蓄力攻击 */
+	bool bQueuedWeaponModeChargedAttack = false;
 
 	/** Distance ahead of the character that melee attack sphere collision traces will extend */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Trace", meta = (ClampMin = 0, ClampMax = 500, Units="cm"))
@@ -138,6 +168,10 @@ protected:
 	/** Names of the AnimMontage sections that correspond to each stage of the combo attack */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Combo")
 	TArray<FName> ComboSectionNames;
+
+	/** 【Codex新增】第1-3段连招没有继续输入时，要跳转到的收刀Section名称 */
+	UPROPERTY(EditAnywhere, Category="Melee Attack|Combo")
+	TArray<FName> ComboSheatheSectionNames;
 
 	/** Max amount of time that may elapse for a combo attack input to not be considered stale */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Combo", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
@@ -179,6 +213,9 @@ protected:
 	/** Attack montage ended delegate */
 	FOnMontageEnded OnAttackMontageEnded;
 
+	/** 【Codex新增】拔刀/收刀Montage结束代理 */
+	FOnMontageEnded OnWeaponModeMontageEnded;
+
 	/** Character respawn timer */
 	FTimerHandle RespawnTimer;
 
@@ -210,6 +247,9 @@ protected:
 	/** Called for toggle camera side input */
 	void ToggleCamera();
 
+	/** 【Codex新增】输入触发的拔刀/收刀切换 */
+	void ToggleWeaponModePressed();
+
 	/** BP hook to animate the camera side switch */
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")
 	void BP_ToggleCamera();
@@ -232,6 +272,30 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoComboAttackEnd();
 
+	/** 【Codex新增】允许蓝图或运行时代码动态替换连招Montage */
+	UFUNCTION(BlueprintCallable, Category="Combat|Combo")
+	void SetComboAttackMontage(UAnimMontage* NewMontage);
+
+	/** 【Codex新增】切换持剑状态；会优先播放拔刀/收刀Montage */
+	UFUNCTION(BlueprintCallable, Category="Weapon Mode")
+	void SetWeaponDrawn(bool bNewWeaponDrawn);
+
+	/** 【Codex新增】在持剑和收刀之间切换 */
+	UFUNCTION(BlueprintCallable, Category="Weapon Mode")
+	void ToggleWeaponMode();
+
+	/** 【Codex新增】AnimBP读取：当前是否持剑 */
+	UFUNCTION(BlueprintPure, Category="Weapon Mode")
+	bool IsWeaponDrawn() const { return bIsWeaponDrawn; }
+
+	/** 【Codex新增】AnimBP读取：当前是否正在拔刀/收刀过渡 */
+	UFUNCTION(BlueprintPure, Category="Weapon Mode")
+	bool IsWeaponModeChanging() const { return bIsWeaponModeChanging; }
+
+	/** 【Codex新增】允许蓝图或运行时代码动态替换拔刀/收刀Montage */
+	UFUNCTION(BlueprintCallable, Category="Weapon Mode")
+	void SetWeaponModeMontages(UAnimMontage* NewDrawMontage, UAnimMontage* NewSheatheMontage);
+
 	/** Handles charged attack pressed from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoChargedAttackStart();
@@ -247,6 +311,21 @@ protected:
 
 	/** Performs a combo attack */
 	void ComboAttack();
+
+	/** 【Codex新增】播放拔刀/收刀Montage；没有Montage时直接落状态 */
+	void PlayWeaponModeMontage(bool bDrawWeapon);
+
+	/** 【Codex新增】拔刀/收刀过渡结束后统一落状态 */
+	void FinishWeaponModeTransition(bool bInterrupted);
+
+	/** 【Codex新增】拔刀/收刀Montage结束回调 */
+	void WeaponModeMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+
+	/** 【Codex新增】跳转到当前连招段对应的收刀Section */
+	void JumpToComboSheatheSection();
+
+	/** 【Codex新增-连招收刀核心逻辑】判断继续连招，还是进入当前段收刀 */
+	void CheckComboOrSheatheSection();
 
 	/** Performs a charged attack */
 	void ChargedAttack();
