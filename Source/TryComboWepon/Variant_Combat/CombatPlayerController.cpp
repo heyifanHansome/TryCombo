@@ -12,6 +12,16 @@
 #include "Blueprint/UserWidget.h"
 #include "TryComboWepon.h"
 #include "Widgets/Input/SVirtualJoystick.h"
+#include "UObject/ConstructorHelpers.h"
+
+ACombatPlayerController::ACombatPlayerController()
+{
+	static ConstructorHelpers::FObjectFinder<UInputMappingContext> DefaultInputContext(TEXT("/Game/Input/IMC_Default.IMC_Default"));
+	if (DefaultInputContext.Succeeded())
+	{
+		DefaultMappingContexts.AddUnique(DefaultInputContext.Object);
+	}
+}
 
 void ACombatPlayerController::BeginPlay()
 {

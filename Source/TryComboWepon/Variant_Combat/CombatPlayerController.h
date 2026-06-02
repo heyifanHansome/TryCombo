@@ -61,6 +61,9 @@ protected:
 
 public:
 
+	/** Constructor */
+	ACombatPlayerController();
+
 	/** Updates the character respawn transform */
 	void SetRespawnTransform(const FTransform& NewRespawn);
 

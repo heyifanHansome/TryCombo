@@ -7,6 +7,7 @@
 #include "CombatAttacker.h"
 #include "CombatDamageable.h"
 #include "Animation/AnimInstance.h"
+#include "InputCoreTypes.h"
 #include "CombatCharacter.generated.h"
 
 class USpringArmComponent;
@@ -77,6 +78,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* ToggleWeaponModeAction;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	FKey ToggleWeaponModeKey = EKeys::G;
+
 	/** Max amount of HP the character will have on respawn */
 	UPROPERTY(EditAnywhere, Category="Damage", meta = (ClampMin = 0, ClampMax = 100))
 	float MaxHP = 5.0f;
@@ -119,7 +123,31 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode")
 	bool bAutoDrawWeaponOnAttack = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode")
+	bool bStartWithWeaponDrawn = false;
+
 	/** 【Codex新增】拔刀Montage */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 1000, Units = "cm/s"))
+	float AutoSheatheMaxGroundSpeed = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 2000, Units = "cm/s"))
+	float SheathedMaxWalkSpeed = 400.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 2000, Units = "cm/s"))
+	float WeaponDrawnMaxWalkSpeed = 600.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 4000, Units = "cm/s^2"))
+	float SheathedMaxAcceleration = 1200.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 4000, Units = "cm/s^2"))
+	float WeaponDrawnMaxAcceleration = 900.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 8000, Units = "cm/s^2"))
+	float SheathedBrakingDeceleration = 2000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 8000, Units = "cm/s^2"))
+	float WeaponDrawnBrakingDeceleration = 1800.0f;
+
 	UPROPERTY(EditAnywhere, Category="Weapon Mode")
 	UAnimMontage* DrawWeaponMontage;
 
@@ -131,6 +159,8 @@ protected:
 	bool bPendingWeaponDrawn = false;
 
 	/** 【Codex新增】拔刀完成后是否继续执行蓄力攻击 */
+	bool bPendingComboSheathe = false;
+
 	bool bQueuedWeaponModeChargedAttack = false;
 
 	/** Distance ahead of the character that melee attack sphere collision traces will extend */
@@ -293,6 +323,12 @@ public:
 	bool IsWeaponModeChanging() const { return bIsWeaponModeChanging; }
 
 	/** 【Codex新增】允许蓝图或运行时代码动态替换拔刀/收刀Montage */
+	UFUNCTION(BlueprintPure, Category="Weapon Mode|Movement")
+	float GetGroundSpeed() const;
+
+	UFUNCTION(BlueprintPure, Category="Weapon Mode|Movement")
+	bool IsMovingOnGround() const;
+
 	UFUNCTION(BlueprintCallable, Category="Weapon Mode")
 	void SetWeaponModeMontages(UAnimMontage* NewDrawMontage, UAnimMontage* NewSheatheMontage);
 
@@ -322,10 +358,14 @@ protected:
 	void WeaponModeMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	/** 【Codex新增】跳转到当前连招段对应的收刀Section */
-	void JumpToComboSheatheSection();
+	bool TryJumpToComboSheatheSection();
 
 	/** 【Codex新增-连招收刀核心逻辑】判断继续连招，还是进入当前段收刀 */
 	void CheckComboOrSheatheSection();
+
+	void ApplyWeaponMovementState();
+
+	bool CanAutoSheatheFromCombo() const;
 
 	/** Performs a charged attack */
 	void ChargedAttack();

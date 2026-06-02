@@ -10,11 +10,13 @@
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "EnhancedInputComponent.h"
+#include "InputAction.h"
 #include "CombatLifeBar.h"
 #include "Engine/DamageEvents.h"
 #include "TimerManager.h"
 #include "Engine/LocalPlayer.h"
 #include "CombatPlayerController.h"
+#include "UObject/ConstructorHelpers.h"
 
 ACombatCharacter::ACombatCharacter()
 {
@@ -24,11 +26,17 @@ ACombatCharacter::ACombatCharacter()
 	OnAttackMontageEnded.BindUObject(this, &ACombatCharacter::AttackMontageEnded);
 	OnWeaponModeMontageEnded.BindUObject(this, &ACombatCharacter::WeaponModeMontageEnded);
 
+	static ConstructorHelpers::FObjectFinder<UInputAction> JumpActionAsset(TEXT("/Game/Input/Actions/IA_Jump.IA_Jump"));
+	if (JumpActionAsset.Succeeded())
+	{
+		JumpAction = JumpActionAsset.Object;
+	}
+
 	// Set size for collision capsule
 	GetCapsuleComponent()->InitCapsuleSize(35.0f, 90.0f);
 
 	// Configure character movement
-	GetCharacterMovement()->MaxWalkSpeed = 400.0f;
+	GetCharacterMovement()->MaxWalkSpeed = SheathedMaxWalkSpeed;
 
 	// create the camera boom
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
@@ -191,6 +199,23 @@ void ACombatCharacter::SetWeaponModeMontages(UAnimMontage* NewDrawMontage, UAnim
 	SheatheWeaponMontage = NewSheatheMontage;
 }
 
+float ACombatCharacter::GetGroundSpeed() const
+{
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		return 0.0f;
+	}
+
+	return FVector(MovementComponent->Velocity.X, MovementComponent->Velocity.Y, 0.0f).Size();
+}
+
+bool ACombatCharacter::IsMovingOnGround() const
+{
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	return MovementComponent && MovementComponent->IsMovingOnGround();
+}
+
 void ACombatCharacter::DoChargedAttackStart()
 {
 	// raise the charging attack flag
@@ -247,6 +272,8 @@ void ACombatCharacter::ComboAttack()
 	{
 		return;
 	}
+
+	bPendingComboSheathe = false;
 
 	// raise the attacking flag
 	bIsAttacking = true;
@@ -309,6 +336,7 @@ void ACombatCharacter::FinishWeaponModeTransition(bool bInterrupted)
 	if (!bInterrupted)
 	{
 		bIsWeaponDrawn = bPendingWeaponDrawn;
+		ApplyWeaponMovementState();
 	}
 
 	bIsWeaponModeChanging = false;
@@ -336,23 +364,27 @@ void ACombatCharacter::WeaponModeMontageEnded(UAnimMontage* Montage, bool bInter
 }
 
 // ==================== Codex新增：跳转到当前段收刀Section ====================
-void ACombatCharacter::JumpToComboSheatheSection()
+bool ACombatCharacter::TryJumpToComboSheatheSection()
 {
-	if (!ComboAttackMontage || !ComboSheatheSectionNames.IsValidIndex(ComboCount))
+	if (!CanAutoSheatheFromCombo() || !ComboAttackMontage || !ComboSheatheSectionNames.IsValidIndex(ComboCount))
 	{
-		return;
+		return false;
 	}
 
 	const FName SheatheSectionName = ComboSheatheSectionNames[ComboCount];
 	if (SheatheSectionName == NAME_None)
 	{
-		return;
+		return false;
 	}
 
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 	{
 		AnimInstance->Montage_JumpToSection(SheatheSectionName, ComboAttackMontage);
+		bPendingComboSheathe = true;
+		return true;
 	}
+
+	return false;
 }
 
 void ACombatCharacter::ChargedAttack()
@@ -384,6 +416,17 @@ void ACombatCharacter::AttackMontageEnded(UAnimMontage* Montage, bool bInterrupt
 {
 	// reset the attacking flag
 	bIsAttacking = false;
+
+	if (Montage == ComboAttackMontage && bPendingComboSheathe)
+	{
+		if (!bInterrupted)
+		{
+			bIsWeaponDrawn = false;
+			ApplyWeaponMovementState();
+		}
+
+		bPendingComboSheathe = false;
+	}
 
 	// check if we have a non-stale cached input
 	if (CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= AttackInputCacheTimeTolerance)
@@ -455,38 +498,57 @@ void ACombatCharacter::CheckCombo()
 // ==================== Codex新增：连招继续/收刀判断核心逻辑 ====================
 void ACombatCharacter::CheckComboOrSheatheSection()
 {
-	// 只处理普通连招，不处理蓄力攻击
-	if (bIsAttacking && !bIsChargingAttack)
+	if (!bIsAttacking || bIsChargingAttack)
 	{
-		// 如果鼠标攻击输入还在有效缓存时间内，就进入下一段连招
-		if (CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= ComboInputCacheTimeTolerance)
+		return;
+	}
+
+	if (CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= ComboInputCacheTimeTolerance)
+	{
+		CachedAttackInputTime = 0.0f;
+		++ComboCount;
+
+		if (ComboCount < ComboSectionNames.Num())
 		{
-			// 消耗这次输入，避免同一次点击触发多次跳段
-			CachedAttackInputTime = 0.0f;
+			NotifyEnemiesOfIncomingAttack();
 
-			// 进入下一段连招
-			++ComboCount;
-
-			// 还有可播放的连招Section时，跳到下一段
-			if (ComboCount < ComboSectionNames.Num())
+			if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 			{
-				// 通知敌人即将受到攻击
-				NotifyEnemiesOfIncomingAttack();
-
-				// 跳转到下一段连招Section
-				if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
-				{
-					AnimInstance->Montage_JumpToSection(ComboSectionNames[ComboCount], ComboAttackMontage);
-				}
+				AnimInstance->Montage_JumpToSection(ComboSectionNames[ComboCount], ComboAttackMontage);
 			}
 		}
-		else
-		{
-			CachedAttackInputTime = 0.0f;
-			// 没有有效输入时，跳到当前段对应的收刀Section
-			JumpToComboSheatheSection();
-		}
+
+		return;
 	}
+
+	CachedAttackInputTime = 0.0f;
+	bPendingComboSheathe = false;
+	TryJumpToComboSheatheSection();
+}
+
+void ACombatCharacter::ApplyWeaponMovementState()
+{
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent)
+	{
+		return;
+	}
+
+	MovementComponent->MaxWalkSpeed = bIsWeaponDrawn ? WeaponDrawnMaxWalkSpeed : SheathedMaxWalkSpeed;
+	MovementComponent->MaxAcceleration = bIsWeaponDrawn ? WeaponDrawnMaxAcceleration : SheathedMaxAcceleration;
+	MovementComponent->BrakingDecelerationWalking = bIsWeaponDrawn ? WeaponDrawnBrakingDeceleration : SheathedBrakingDeceleration;
+}
+
+bool ACombatCharacter::CanAutoSheatheFromCombo() const
+{
+	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	if (!MovementComponent || !MovementComponent->IsMovingOnGround())
+	{
+		return false;
+	}
+
+	const float GroundSpeed = FVector(MovementComponent->Velocity.X, MovementComponent->Velocity.Y, 0.0f).Size();
+	return GroundSpeed <= AutoSheatheMaxGroundSpeed;
 }
 
 void ACombatCharacter::CheckChargedAttack()
@@ -660,6 +722,11 @@ void ACombatCharacter::BeginPlay()
 
 	// reset HP to maximum
 	ResetHP();
+
+	bIsWeaponDrawn = bStartWithWeaponDrawn;
+	bPendingWeaponDrawn = bIsWeaponDrawn;
+	bIsWeaponModeChanging = false;
+	ApplyWeaponMovementState();
 }
 
 void ACombatCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -677,6 +744,10 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	// Set up action bindings
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
 	{
+		// Jumping
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+
 		// Moving
 		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ACombatCharacter::Move);
 
@@ -695,7 +766,15 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(ToggleCameraAction, ETriggerEvent::Triggered, this, &ACombatCharacter::ToggleCamera);
 
 		// Weapon Mode Toggle
-		EnhancedInputComponent->BindAction(ToggleWeaponModeAction, ETriggerEvent::Started, this, &ACombatCharacter::ToggleWeaponModePressed);
+		if (ToggleWeaponModeAction)
+		{
+			EnhancedInputComponent->BindAction(ToggleWeaponModeAction, ETriggerEvent::Started, this, &ACombatCharacter::ToggleWeaponModePressed);
+		}
+	}
+
+	if (ToggleWeaponModeKey.IsValid())
+	{
+		PlayerInputComponent->BindKey(ToggleWeaponModeKey, IE_Pressed, this, &ACombatCharacter::ToggleWeaponModePressed);
 	}
 }
 
