@@ -156,6 +156,7 @@ void ACombatCharacter::DoComboAttackStart()
 	{
 		// cache the input time so we can check it later
 		CachedAttackInputTime = GetWorld()->GetTimeSeconds();
+		bComboInputQueued = true;
 
 		return;
 	}
@@ -175,9 +176,33 @@ void ACombatCharacter::SetComboAttackMontage(UAnimMontage* NewMontage)
 	ComboAttackMontage = NewMontage;
 }
 
+void ACombatCharacter::SetCurrentWeaponType(ECombatWeaponType NewWeaponType)
+{
+	CurrentWeaponType = NewWeaponType;
+
+	if (CurrentWeaponType == ECombatWeaponType::Unarmed)
+	{
+		bIsWeaponDrawn = false;
+		bPendingWeaponDrawn = false;
+		bIsWeaponModeChanging = false;
+	}
+
+	ApplyWeaponMovementState();
+}
+
 // ==================== Codex新增：持剑/收刀模式切换入口 ====================
 void ACombatCharacter::SetWeaponDrawn(bool bNewWeaponDrawn)
 {
+	if (bNewWeaponDrawn && CurrentWeaponType == ECombatWeaponType::Unarmed)
+	{
+		CurrentWeaponType = DefaultWeaponType;
+	}
+
+	if (bNewWeaponDrawn && CurrentWeaponType == ECombatWeaponType::Unarmed)
+	{
+		return;
+	}
+
 	if (bIsWeaponModeChanging || bIsWeaponDrawn == bNewWeaponDrawn)
 	{
 		return;
@@ -280,6 +305,7 @@ void ACombatCharacter::ComboAttack()
 
 	// reset the combo count
 	ComboCount = 0;
+	bComboInputQueued = false;
 
 	// notify enemies they are about to be attacked
 	NotifyEnemiesOfIncomingAttack();
@@ -503,9 +529,11 @@ void ACombatCharacter::CheckComboOrSheatheSection()
 		return;
 	}
 
-	if (CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= ComboInputCacheTimeTolerance)
+	const bool bHasCachedComboInput = CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= ComboInputCacheTimeTolerance;
+	if (bComboInputQueued || bHasCachedComboInput)
 	{
 		CachedAttackInputTime = 0.0f;
+		bComboInputQueued = false;
 		++ComboCount;
 
 		if (ComboCount < ComboSectionNames.Num())
@@ -522,6 +550,7 @@ void ACombatCharacter::CheckComboOrSheatheSection()
 	}
 
 	CachedAttackInputTime = 0.0f;
+	bComboInputQueued = false;
 	bPendingComboSheathe = false;
 	TryJumpToComboSheatheSection();
 }
@@ -723,7 +752,8 @@ void ACombatCharacter::BeginPlay()
 	// reset HP to maximum
 	ResetHP();
 
-	bIsWeaponDrawn = bStartWithWeaponDrawn;
+	CurrentWeaponType = DefaultWeaponType;
+	bIsWeaponDrawn = bStartWithWeaponDrawn && CurrentWeaponType != ECombatWeaponType::Unarmed;
 	bPendingWeaponDrawn = bIsWeaponDrawn;
 	bIsWeaponModeChanging = false;
 	ApplyWeaponMovementState();
@@ -756,7 +786,10 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInputComponent->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &ACombatCharacter::Look);
 
 		// Combo Attack
-		EnhancedInputComponent->BindAction(ComboAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ComboAttackPressed);
+		if (ComboAttackAction)
+		{
+			EnhancedInputComponent->BindAction(ComboAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ComboAttackPressed);
+		}
 
 		// Charged Attack
 		EnhancedInputComponent->BindAction(ChargedAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ChargedAttackPressed);
@@ -775,6 +808,11 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	if (ToggleWeaponModeKey.IsValid())
 	{
 		PlayerInputComponent->BindKey(ToggleWeaponModeKey, IE_Pressed, this, &ACombatCharacter::ToggleWeaponModePressed);
+	}
+
+	if (ComboAttackKey.IsValid())
+	{
+		PlayerInputComponent->BindKey(ComboAttackKey, IE_Pressed, this, &ACombatCharacter::ComboAttackPressed);
 	}
 }
 

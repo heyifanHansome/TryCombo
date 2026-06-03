@@ -19,6 +19,13 @@ class UWidgetComponent;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
 
+UENUM(BlueprintType)
+enum class ECombatWeaponType : uint8
+{
+	Unarmed UMETA(DisplayName="Unarmed"),
+	Katana UMETA(DisplayName="Katana")
+};
+
 /**
  *  An enhanced Third Person Character with melee combat capabilities:
  *  - Combo attack string
@@ -65,6 +72,9 @@ protected:
 	/** Combo Attack Input Action */
 	UPROPERTY(EditAnywhere, Category ="Input")
 	UInputAction* ComboAttackAction;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	FKey ComboAttackKey = EKeys::LeftMouseButton;
 
 	/** Charged Attack Input Action */
 	UPROPERTY(EditAnywhere, Category ="Input")
@@ -116,6 +126,12 @@ protected:
 	bool bIsWeaponDrawn = false;
 
 	/** 【Codex新增】当前是否正在播放拔刀/收刀过渡Montage */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode")
+	ECombatWeaponType DefaultWeaponType = ECombatWeaponType::Katana;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Weapon Mode")
+	ECombatWeaponType CurrentWeaponType = ECombatWeaponType::Unarmed;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Weapon Mode")
 	bool bIsWeaponModeChanging = false;
 
@@ -209,6 +225,9 @@ protected:
 
 	/** Index of the current stage of the melee attack combo */
 	int32 ComboCount = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	bool bComboInputQueued = false;
 
 	/** AnimMontage that will play for charged attacks */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Charged")
@@ -323,6 +342,15 @@ public:
 	bool IsWeaponModeChanging() const { return bIsWeaponModeChanging; }
 
 	/** 【Codex新增】允许蓝图或运行时代码动态替换拔刀/收刀Montage */
+	UFUNCTION(BlueprintPure, Category="Weapon Mode")
+	ECombatWeaponType GetCurrentWeaponType() const { return CurrentWeaponType; }
+
+	UFUNCTION(BlueprintPure, Category="Weapon Mode")
+	ECombatWeaponType GetActiveWeaponType() const { return bIsWeaponDrawn ? CurrentWeaponType : ECombatWeaponType::Unarmed; }
+
+	UFUNCTION(BlueprintCallable, Category="Weapon Mode")
+	void SetCurrentWeaponType(ECombatWeaponType NewWeaponType);
+
 	UFUNCTION(BlueprintPure, Category="Weapon Mode|Movement")
 	float GetGroundSpeed() const;
 
