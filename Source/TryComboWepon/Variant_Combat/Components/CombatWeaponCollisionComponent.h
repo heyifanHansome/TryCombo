@@ -86,6 +86,36 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug")
 	bool bDrawDebugTraces = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug")
+	bool bDrawDebugCollisionBodies = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug")
+	bool bDrawDebugOnlyWhenCollisionWindowActive = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug", meta=(ClampMin=0, ClampMax=10, Units="s"))
+	float DebugCollisionBodyDrawDuration = 0.05f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug", meta=(ClampMin=0, ClampMax=20))
+	float DebugCollisionBodyThickness = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug")
+	FColor DebugInactiveCollisionBodyColor = FColor::Cyan;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug")
+	FColor DebugActiveCollisionBodyColor = FColor::Red;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug")
+	FName DebugFallbackCollisionBodyComponentName = TEXT("KatanaHitBox");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug")
+	bool bAutoRegisterDebugFallbackCollisionBody = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug")
+	bool bPrintDebugMessages = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Weapon Collision|Debug", meta=(ClampMin=0, ClampMax=10, Units="s"))
+	float DebugMessageDuration = 2.0f;
+
 	UPROPERTY(BlueprintAssignable, Category="Weapon Collision")
 	FCombatWeaponDamageDealtSignature OnDamageDealt;
 
@@ -113,8 +143,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Weapon Collision")
 	bool PerformAttackTrace(USkeletalMeshComponent* SourceMesh, FName WeaponId, FName FallbackSourceSocket);
 
+	UFUNCTION(BlueprintCallable, Category="Weapon Collision|Debug")
+	void DrawDebugCollisionBodies() const;
+
 protected:
 	virtual void BeginPlay() override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 	const FCombatWeaponCollisionProfile* FindProfile(FName WeaponId) const;
 	const FCombatWeaponCollisionProfile* GetActiveProfile() const;
@@ -122,6 +156,11 @@ protected:
 	bool ApplyHit(const FHitResult& Hit, const FCombatWeaponCollisionProfile& Profile, TSet<TWeakObjectPtr<AActor>>& ActorsHitThisTrace);
 	bool ApplyDamageToActor(AActor* HitActor, const FVector& ImpactPoint, const FVector& ImpactNormal, const FCombatWeaponCollisionProfile& Profile, TSet<TWeakObjectPtr<AActor>>& ActorsHitThisTrace);
 	void SetCollisionBodiesEnabled(bool bEnabled, FName WeaponId);
+	bool HasRegisteredCollisionBody(FName WeaponId) const;
+	bool TryAutoRegisterFallbackCollisionBody(FName WeaponId);
+	void ProcessActiveCollisionBodyOverlaps();
+	void DrawDebugCollisionBody(const FCombatWeaponCollisionBody& Body) const;
+	void PrintDebugMessage(const FString& Message, const FColor& Color) const;
 
 	UFUNCTION()
 	void HandleCollisionBodyBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
