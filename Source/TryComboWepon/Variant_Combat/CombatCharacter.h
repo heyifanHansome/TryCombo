@@ -13,8 +13,10 @@
 class USpringArmComponent;
 class UCameraComponent;
 class UInputAction;
+class USceneComponent;
 struct FInputActionValue;
 class UCombatLifeBar;
+class UCombatWeaponCollisionComponent;
 class UWidgetComponent;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
@@ -50,6 +52,14 @@ class ACombatCharacter : public ACharacter, public ICombatAttacker, public IComb
 	/** Life bar widget component */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	UWidgetComponent* LifeBar;
+
+	/** Weapon hit detection and damage application */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	UCombatWeaponCollisionComponent* WeaponCollision;
+
+	/** Attach visible weapon meshes and weapon collision bodies under this scene component. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	USceneComponent* WeaponRoot;
 	
 protected:
 
@@ -142,6 +152,39 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode")
 	bool bStartWithWeaponDrawn = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Visual")
+	FName DrawnWeaponAttachSocketName = TEXT("hand_rSocket");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Visual")
+	FName SheathedWeaponAttachSocketName = TEXT("spine_03");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Collision|Auto Register")
+	bool bAutoRegisterDefaultWeaponHitBox = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Collision|Auto Register")
+	FName DefaultWeaponHitBoxComponentName = TEXT("KatanaHitBox");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Visual")
+	FName DefaultWeaponMeshComponentName = TEXT("KatanaMesh");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Visual")
+	FName DefaultWeaponSheathMeshComponentName = TEXT("KatanaSheathMesh");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Collision|Auto Fit")
+	bool bAutoFitDefaultWeaponHitBoxToWeaponMesh = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Collision|Auto Fit", meta=(ClampMin=0.05, ClampMax=1.0))
+	float AutoFitBladeLengthRatio = 0.82f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Collision|Auto Fit", meta=(ClampMin=0.05, ClampMax=1.0))
+	float AutoFitBladeThicknessRatio = 0.45f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Collision|Auto Fit", meta=(ClampMin=-1.0, ClampMax=1.0))
+	float AutoFitBladeCenterBias = 0.09f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Collision|Auto Fit", meta=(ClampMin=0.0, ClampMax=50.0, Units="cm"))
+	float AutoFitBladePadding = 2.0f;
+
 	/** 【Codex新增】拔刀Montage */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 1000, Units = "cm/s"))
 	float AutoSheatheMaxGroundSpeed = 10.0f;
@@ -170,6 +213,9 @@ protected:
 	/** 【Codex新增】收刀Montage */
 	UPROPERTY(EditAnywhere, Category="Weapon Mode")
 	UAnimMontage* SheatheWeaponMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Debug", meta = (ClampMin = 0.05, ClampMax = 3.0))
+	float WeaponModeMontagePlayRate = 1.0f;
 
 	/** 【Codex新增】拔刀/收刀目标状态，用于Montage结束后落状态 */
 	bool bPendingWeaponDrawn = false;
@@ -211,6 +257,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Combo")
 	UAnimMontage* ComboAttackMontage;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo|Debug", meta = (ClampMin = 0.05, ClampMax = 3.0))
+	float ComboAttackMontagePlayRate = 1.0f;
+
 	/** Names of the AnimMontage sections that correspond to each stage of the combo attack */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Combo")
 	TArray<FName> ComboSectionNames;
@@ -219,9 +268,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Combo")
 	TArray<FName> ComboSheatheSectionNames;
 
-	/** Max amount of time that may elapse for a combo attack input to not be considered stale */
-	UPROPERTY(EditAnywhere, Category="Melee Attack|Combo", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
-	float ComboInputCacheTimeTolerance = 0.45f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	bool bRequireComboInputWindow = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	bool bCheckComboOnInputWindowEnd = true;
 
 	/** Index of the current stage of the melee attack combo */
 	int32 ComboCount = 0;
@@ -229,9 +280,30 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
 	bool bComboInputQueued = false;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	bool bComboAttackHeld = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	bool bComboInputWindowOpen = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	bool bComboInputWindowConsumed = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	float ComboInputWindowElapsedTime = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	float ComboInputWindowDuration = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Melee Attack|Combo")
+	float ComboInputWindowAlpha = 0.0f;
+
 	/** AnimMontage that will play for charged attacks */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Charged")
 	UAnimMontage* ChargedAttackMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Melee Attack|Charged|Debug", meta = (ClampMin = 0.05, ClampMax = 3.0))
+	float ChargedAttackMontagePlayRate = 1.0f;
 
 	/** Name of the AnimMontage section that corresponds to the charge loop */
 	UPROPERTY(EditAnywhere, Category="Melee Attack|Charged")
@@ -254,6 +326,18 @@ protected:
 	/** Camera boom length when the character respawns */
 	UPROPERTY(EditAnywhere, Category="Camera", meta = (ClampMin = 0, ClampMax = 1000, Units = "cm"))
 	float DefaultCameraDistance = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Camera|Debug")
+	bool bUseFrontDebugCamera = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Camera|Debug", meta = (ClampMin = 0, ClampMax = 1000, Units = "cm"))
+	float FrontDebugCameraDistance = 220.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Camera|Debug", meta = (ClampMin = -89, ClampMax = 89, Units = "deg"))
+	float FrontDebugCameraPitch = -5.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Camera|Debug", meta = (ClampMin = -180, ClampMax = 180, Units = "deg"))
+	float FrontDebugCameraYaw = 180.0f;
 
 	/** Time to wait before respawning the character */
 	UPROPERTY(EditAnywhere, Category="Respawn", meta = (ClampMin = 0, ClampMax = 10, Units = "s"))
@@ -360,6 +444,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Weapon Mode")
 	void SetWeaponModeMontages(UAnimMontage* NewDrawMontage, UAnimMontage* NewSheatheMontage);
 
+	UFUNCTION(BlueprintCallable, Category="Weapon Mode|Visual")
+	void AttachWeaponToDrawnSocket();
+
+	UFUNCTION(BlueprintCallable, Category="Weapon Mode|Visual")
+	void AttachWeaponToSheathedSocket();
+
+	UFUNCTION(BlueprintCallable, Category="Weapon Mode|Visual")
+	void AttachWeaponToSocket(FName SocketName);
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Combo")
+	void EndComboMontage(float BlendOutTime = 0.05f);
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Combo")
+	void BeginComboInputWindow(float WindowDuration = 0.0f);
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Combo")
+	void TickComboInputWindow(float DeltaSeconds, float WindowDuration);
+
+	UFUNCTION(BlueprintCallable, Category="Combat|Combo")
+	void EndComboInputWindow(FName NoInputSectionName = NAME_None);
+
 	/** Handles charged attack pressed from either controls or UI interfaces */
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoChargedAttackStart();
@@ -386,14 +491,34 @@ protected:
 	void WeaponModeMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 
 	/** 【Codex新增】跳转到当前连招段对应的收刀Section */
-	bool TryJumpToComboSheatheSection();
+	bool TryJumpToComboSheatheSection(FName OverrideSectionName = NAME_None);
 
 	/** 【Codex新增-连招收刀核心逻辑】判断继续连招，还是进入当前段收刀 */
-	void CheckComboOrSheatheSection();
+	void CheckComboOrSheatheSection(FName OverrideSheatheSectionName = NAME_None);
+
+	void QueueComboInputIfAllowed();
+
+	bool IsComboAttackInputHeld() const;
 
 	void ApplyWeaponMovementState();
 
+	void ApplyCameraDebugSettings();
+
+	void UpdateWeaponAttachment();
+
+	bool ShouldAttachWeaponAsDrawn() const;
+
+	void AttachComponentToWeaponSocket(USceneComponent* ComponentToAttach, FName SocketName);
+
+	void AttachNamedWeaponComponents(FName SocketName);
+
+	void AutoFitDefaultWeaponHitBox();
+
+	void RegisterDefaultWeaponHitBox();
+
 	bool CanAutoSheatheFromCombo() const;
+
+	FName GetActiveWeaponCollisionId() const;
 
 	/** Performs a charged attack */
 	void ChargedAttack();
@@ -449,9 +574,14 @@ public:
 
 protected:
 
+	virtual void OnConstruction(const FTransform& Transform) override;
+
 	/** Blueprint handler to play damage dealt effects */
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")
 	void DealtDamage(float Damage, const FVector& ImpactPoint);
+
+	UFUNCTION()
+	void HandleWeaponDamageDealt(float Damage, const FVector& ImpactPoint);
 
 	/** Blueprint handler to play damage received effects */
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")

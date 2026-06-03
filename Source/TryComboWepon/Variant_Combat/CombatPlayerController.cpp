@@ -21,6 +21,12 @@ ACombatPlayerController::ACombatPlayerController()
 	{
 		DefaultMappingContexts.AddUnique(DefaultInputContext.Object);
 	}
+
+	static ConstructorHelpers::FObjectFinder<UInputMappingContext> CombatInputContext(TEXT("/Game/Variant_Combat/Input/IMC_Combat.IMC_Combat"));
+	if (CombatInputContext.Succeeded())
+	{
+		DefaultMappingContexts.AddUnique(CombatInputContext.Object);
+	}
 }
 
 void ACombatPlayerController::BeginPlay()

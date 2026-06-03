@@ -5,8 +5,14 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/WidgetComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Components/PrimitiveComponent.h"
+#include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/SkinnedMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/BoxComponent.h"
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "EnhancedInputComponent.h"
@@ -16,6 +22,7 @@
 #include "TimerManager.h"
 #include "Engine/LocalPlayer.h"
 #include "CombatPlayerController.h"
+#include "Components/CombatWeaponCollisionComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
 ACombatCharacter::ACombatCharacter()
@@ -30,6 +37,42 @@ ACombatCharacter::ACombatCharacter()
 	if (JumpActionAsset.Succeeded())
 	{
 		JumpAction = JumpActionAsset.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UInputAction> MoveActionAsset(TEXT("/Game/Input/Actions/IA_Move.IA_Move"));
+	if (MoveActionAsset.Succeeded())
+	{
+		MoveAction = MoveActionAsset.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UInputAction> LookActionAsset(TEXT("/Game/Input/Actions/IA_Look.IA_Look"));
+	if (LookActionAsset.Succeeded())
+	{
+		LookAction = LookActionAsset.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UInputAction> MouseLookActionAsset(TEXT("/Game/Input/Actions/IA_MouseLook.IA_MouseLook"));
+	if (MouseLookActionAsset.Succeeded())
+	{
+		MouseLookAction = MouseLookActionAsset.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UInputAction> ComboAttackActionAsset(TEXT("/Game/Variant_Combat/Input/Actions/IA_ComboAttack.IA_ComboAttack"));
+	if (ComboAttackActionAsset.Succeeded())
+	{
+		ComboAttackAction = ComboAttackActionAsset.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UInputAction> ChargedAttackActionAsset(TEXT("/Game/Variant_Combat/Input/Actions/IA_ChargedAttack.IA_ChargedAttack"));
+	if (ChargedAttackActionAsset.Succeeded())
+	{
+		ChargedAttackAction = ChargedAttackActionAsset.Object;
+	}
+
+	static ConstructorHelpers::FObjectFinder<UInputAction> ToggleCameraActionAsset(TEXT("/Game/Variant_Combat/Input/Actions/IA_ToggleCameraSide.IA_ToggleCameraSide"));
+	if (ToggleCameraActionAsset.Succeeded())
+	{
+		ToggleCameraAction = ToggleCameraActionAsset.Object;
 	}
 
 	// Set size for collision capsule
@@ -55,6 +98,11 @@ ACombatCharacter::ACombatCharacter()
 	// create the life bar widget component
 	LifeBar = CreateDefaultSubobject<UWidgetComponent>(TEXT("LifeBar"));
 	LifeBar->SetupAttachment(RootComponent);
+
+	WeaponCollision = CreateDefaultSubobject<UCombatWeaponCollisionComponent>(TEXT("WeaponCollision"));
+
+	WeaponRoot = CreateDefaultSubobject<USceneComponent>(TEXT("WeaponRoot"));
+	WeaponRoot->SetupAttachment(GetMesh(), SheathedWeaponAttachSocketName);
 
 	// set the player tag
 	Tags.Add(FName("Player"));
@@ -138,6 +186,8 @@ void ACombatCharacter::DoLook(float Yaw, float Pitch)
 
 void ACombatCharacter::DoComboAttackStart()
 {
+	bComboAttackHeld = true;
+
 	if (!bIsWeaponDrawn || bIsWeaponModeChanging)
 	{
 		CachedAttackInputTime = GetWorld()->GetTimeSeconds();
@@ -154,9 +204,18 @@ void ACombatCharacter::DoComboAttackStart()
 	// are we already playing an attack animation?
 	if (bIsAttacking)
 	{
-		// cache the input time so we can check it later
-		CachedAttackInputTime = GetWorld()->GetTimeSeconds();
-		bComboInputQueued = true;
+		if (bPendingComboSheathe)
+		{
+			return;
+		}
+
+		if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+		{
+			if (ComboAttackMontage && AnimInstance->Montage_IsPlaying(ComboAttackMontage))
+			{
+				QueueComboInputIfAllowed();
+			}
+		}
 
 		return;
 	}
@@ -167,7 +226,7 @@ void ACombatCharacter::DoComboAttackStart()
 
 void ACombatCharacter::DoComboAttackEnd()
 {
-	// stub
+	bComboAttackHeld = false;
 }
 
 // ==================== Codex新增：动态绑定连招Montage ====================
@@ -222,6 +281,82 @@ void ACombatCharacter::SetWeaponModeMontages(UAnimMontage* NewDrawMontage, UAnim
 {
 	DrawWeaponMontage = NewDrawMontage;
 	SheatheWeaponMontage = NewSheatheMontage;
+}
+
+void ACombatCharacter::BeginComboInputWindow(float WindowDuration)
+{
+	if (!bIsAttacking || bIsChargingAttack || bPendingComboSheathe)
+	{
+		return;
+	}
+
+	bComboInputQueued = false;
+	bComboInputWindowOpen = true;
+	bComboInputWindowConsumed = false;
+	ComboInputWindowElapsedTime = 0.0f;
+	ComboInputWindowDuration = FMath::Max(0.0f, WindowDuration);
+	ComboInputWindowAlpha = 0.0f;
+
+	UE_LOG(LogTemp, Warning, TEXT("ComboWindow Begin: Combo=%d Duration=%.3f Held=%d"), ComboCount, ComboInputWindowDuration, IsComboAttackInputHeld() ? 1 : 0);
+
+}
+
+void ACombatCharacter::TickComboInputWindow(float DeltaSeconds, float WindowDuration)
+{
+	if (!bComboInputWindowOpen)
+	{
+		return;
+	}
+
+	ComboInputWindowDuration = FMath::Max(ComboInputWindowDuration, WindowDuration);
+	ComboInputWindowElapsedTime = FMath::Max(0.0f, ComboInputWindowElapsedTime + DeltaSeconds);
+
+	if (ComboInputWindowDuration > 0.0f)
+	{
+		ComboInputWindowAlpha = FMath::Clamp(ComboInputWindowElapsedTime / ComboInputWindowDuration, 0.0f, 1.0f);
+	}
+
+}
+
+void ACombatCharacter::EndComboInputWindow(FName NoInputSectionName)
+{
+	bComboInputWindowOpen = false;
+	ComboInputWindowAlpha = ComboInputWindowDuration > 0.0f ? 1.0f : ComboInputWindowAlpha;
+
+	UE_LOG(LogTemp, Warning, TEXT("ComboWindow End: Combo=%d Queued=%d Held=%d"), ComboCount, bComboInputQueued ? 1 : 0, IsComboAttackInputHeld() ? 1 : 0);
+
+	if (bCheckComboOnInputWindowEnd)
+	{
+		CheckComboOrSheatheSection(NoInputSectionName);
+	}
+}
+
+void ACombatCharacter::EndComboMontage(float BlendOutTime)
+{
+	if (WeaponCollision)
+	{
+		WeaponCollision->EndCollisionWindow();
+	}
+
+	bComboInputQueued = false;
+	bComboInputWindowOpen = false;
+	bComboInputWindowConsumed = false;
+	ComboInputWindowElapsedTime = 0.0f;
+	ComboInputWindowDuration = 0.0f;
+	ComboInputWindowAlpha = 0.0f;
+	CachedAttackInputTime = 0.0f;
+	bPendingComboSheathe = false;
+
+	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
+	{
+		if (ComboAttackMontage && AnimInstance->Montage_IsPlaying(ComboAttackMontage))
+		{
+			AnimInstance->Montage_Stop(BlendOutTime, ComboAttackMontage);
+			return;
+		}
+	}
+
+	bIsAttacking = false;
 }
 
 float ACombatCharacter::GetGroundSpeed() const
@@ -299,13 +434,24 @@ void ACombatCharacter::ComboAttack()
 	}
 
 	bPendingComboSheathe = false;
+	CachedAttackInputTime = 0.0f;
 
 	// raise the attacking flag
 	bIsAttacking = true;
 
+	if (WeaponCollision)
+	{
+		WeaponCollision->ResetHitActors();
+	}
+
 	// reset the combo count
 	ComboCount = 0;
 	bComboInputQueued = false;
+	bComboInputWindowOpen = false;
+	bComboInputWindowConsumed = false;
+	ComboInputWindowElapsedTime = 0.0f;
+	ComboInputWindowDuration = 0.0f;
+	ComboInputWindowAlpha = 0.0f;
 
 	// notify enemies they are about to be attacked
 	NotifyEnemiesOfIncomingAttack();
@@ -313,18 +459,13 @@ void ACombatCharacter::ComboAttack()
 	// play the attack montage
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 	{
-		const float MontageLength = AnimInstance->Montage_Play(ComboAttackMontage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, true);
+		const float MontageLength = AnimInstance->Montage_Play(ComboAttackMontage, ComboAttackMontagePlayRate, EMontagePlayReturnType::MontageLength, 0.0f, true);
 
 		// subscribe to montage completed and interrupted events
 		if (MontageLength > 0.0f)
 		{
 			// set the end delegate for the montage
 			AnimInstance->Montage_SetEndDelegate(OnAttackMontageEnded, ComboAttackMontage);
-
-			if (ComboSectionNames.IsValidIndex(ComboCount) && ComboSectionNames[ComboCount] != NAME_None)
-			{
-				AnimInstance->Montage_JumpToSection(ComboSectionNames[ComboCount], ComboAttackMontage);
-			}
 		}
 	}
 
@@ -345,7 +486,7 @@ void ACombatCharacter::PlayWeaponModeMontage(bool bDrawWeapon)
 
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 	{
-		const float MontageLength = AnimInstance->Montage_Play(WeaponModeMontage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, true);
+		const float MontageLength = AnimInstance->Montage_Play(WeaponModeMontage, WeaponModeMontagePlayRate, EMontagePlayReturnType::MontageLength, 0.0f, true);
 		if (MontageLength > 0.0f)
 		{
 			AnimInstance->Montage_SetEndDelegate(OnWeaponModeMontageEnded, WeaponModeMontage);
@@ -363,6 +504,7 @@ void ACombatCharacter::FinishWeaponModeTransition(bool bInterrupted)
 	{
 		bIsWeaponDrawn = bPendingWeaponDrawn;
 		ApplyWeaponMovementState();
+		UpdateWeaponAttachment();
 	}
 
 	bIsWeaponModeChanging = false;
@@ -390,14 +532,16 @@ void ACombatCharacter::WeaponModeMontageEnded(UAnimMontage* Montage, bool bInter
 }
 
 // ==================== Codex新增：跳转到当前段收刀Section ====================
-bool ACombatCharacter::TryJumpToComboSheatheSection()
+bool ACombatCharacter::TryJumpToComboSheatheSection(FName OverrideSectionName)
 {
-	if (!CanAutoSheatheFromCombo() || !ComboAttackMontage || !ComboSheatheSectionNames.IsValidIndex(ComboCount))
+	if (!ComboAttackMontage)
 	{
 		return false;
 	}
 
-	const FName SheatheSectionName = ComboSheatheSectionNames[ComboCount];
+	const FName SheatheSectionName = OverrideSectionName != NAME_None
+		? OverrideSectionName
+		: (ComboSheatheSectionNames.IsValidIndex(ComboCount) ? ComboSheatheSectionNames[ComboCount] : NAME_None);
 	if (SheatheSectionName == NAME_None)
 	{
 		return false;
@@ -405,8 +549,11 @@ bool ACombatCharacter::TryJumpToComboSheatheSection()
 
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 	{
-		AnimInstance->Montage_JumpToSection(SheatheSectionName, ComboAttackMontage);
+		bComboInputQueued = false;
+		CachedAttackInputTime = 0.0f;
 		bPendingComboSheathe = true;
+		AnimInstance->Montage_SetNextSection(SheatheSectionName, NAME_None, ComboAttackMontage);
+		AnimInstance->Montage_JumpToSection(SheatheSectionName, ComboAttackMontage);
 		return true;
 	}
 
@@ -418,6 +565,11 @@ void ACombatCharacter::ChargedAttack()
 	// raise the attacking flag
 	bIsAttacking = true;
 
+	if (WeaponCollision)
+	{
+		WeaponCollision->ResetHitActors();
+	}
+
 	// reset the charge loop flag
 	bHasLoopedChargedAttack = false;
 
@@ -427,7 +579,7 @@ void ACombatCharacter::ChargedAttack()
 	// play the charged attack montage
 	if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
 	{
-		const float MontageLength = AnimInstance->Montage_Play(ChargedAttackMontage, 1.0f, EMontagePlayReturnType::MontageLength, 0.0f, true);
+		const float MontageLength = AnimInstance->Montage_Play(ChargedAttackMontage, ChargedAttackMontagePlayRate, EMontagePlayReturnType::MontageLength, 0.0f, true);
 
 		// subscribe to montage completed and interrupted events
 		if (MontageLength > 0.0f)
@@ -440,18 +592,42 @@ void ACombatCharacter::ChargedAttack()
 
 void ACombatCharacter::AttackMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
+	if (WeaponCollision)
+	{
+		WeaponCollision->EndCollisionWindow();
+	}
+
+	const bool bWasComboMontage = Montage == ComboAttackMontage;
+	const bool bWasComboSheathing = bWasComboMontage && bPendingComboSheathe;
+
 	// reset the attacking flag
 	bIsAttacking = false;
 
-	if (Montage == ComboAttackMontage && bPendingComboSheathe)
+	if (bWasComboMontage)
+	{
+		bComboInputQueued = false;
+		bComboInputWindowOpen = false;
+		bComboInputWindowConsumed = false;
+		ComboInputWindowElapsedTime = 0.0f;
+		ComboInputWindowDuration = 0.0f;
+		ComboInputWindowAlpha = 0.0f;
+		CachedAttackInputTime = 0.0f;
+		bPendingComboSheathe = false;
+	}
+
+	if (bWasComboSheathing)
 	{
 		if (!bInterrupted)
 		{
 			bIsWeaponDrawn = false;
 			ApplyWeaponMovementState();
+			UpdateWeaponAttachment();
 		}
+	}
 
-		bPendingComboSheathe = false;
+	if (bWasComboMontage)
+	{
+		return;
 	}
 
 	// check if we have a non-stale cached input
@@ -473,46 +649,9 @@ void ACombatCharacter::AttackMontageEnded(UAnimMontage* Montage, bool bInterrupt
 
 void ACombatCharacter::DoAttackTrace(FName DamageSourceBone)
 {
-	// sweep for objects in front of the character to be hit by the attack
-	TArray<FHitResult> OutHits;
-
-	// start at the provided socket location, sweep forward
-	const FVector TraceStart = GetMesh()->GetSocketLocation(DamageSourceBone);
-	const FVector TraceEnd = TraceStart + (GetActorForwardVector() * MeleeTraceDistance);
-
-	// check for pawn and world dynamic collision object types
-	FCollisionObjectQueryParams ObjectParams;
-	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
-	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
-
-	// use a sphere shape for the sweep
-	FCollisionShape CollisionShape;
-	CollisionShape.SetSphere(MeleeTraceRadius);
-
-	// ignore self
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(this);
-
-	if (GetWorld()->SweepMultiByObjectType(OutHits, TraceStart, TraceEnd, FQuat::Identity, ObjectParams, CollisionShape, QueryParams))
+	if (WeaponCollision)
 	{
-		// iterate over each object hit
-		for (const FHitResult& CurrentHit : OutHits)
-		{
-			// check if we've hit a damageable actor
-			ICombatDamageable* Damageable = Cast<ICombatDamageable>(CurrentHit.GetActor());
-
-			if (Damageable)
-			{
-				// knock upwards and away from the impact normal
-				const FVector Impulse = (CurrentHit.ImpactNormal * -MeleeKnockbackImpulse) + (FVector::UpVector * MeleeLaunchImpulse);
-
-				// pass the damage event to the actor
-				Damageable->ApplyDamage(MeleeDamage, this, CurrentHit.ImpactPoint, Impulse);
-
-				// call the BP handler to play effects, etc.
-				DealtDamage(MeleeDamage, CurrentHit.ImpactPoint);
-			}
-		}
+		WeaponCollision->PerformAttackTrace(GetMesh(), GetActiveWeaponCollisionId(), DamageSourceBone);
 	}
 }
 
@@ -522,37 +661,78 @@ void ACombatCharacter::CheckCombo()
 }
 
 // ==================== Codex新增：连招继续/收刀判断核心逻辑 ====================
-void ACombatCharacter::CheckComboOrSheatheSection()
+void ACombatCharacter::CheckComboOrSheatheSection(FName OverrideSheatheSectionName)
 {
-	if (!bIsAttacking || bIsChargingAttack)
+	if (!bIsAttacking || bIsChargingAttack || bPendingComboSheathe)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("ComboWindow Check skipped: Attacking=%d Charging=%d PendingSheathe=%d"), bIsAttacking ? 1 : 0, bIsChargingAttack ? 1 : 0, bPendingComboSheathe ? 1 : 0);
 		return;
 	}
 
-	const bool bHasCachedComboInput = CachedAttackInputTime > 0.0f && GetWorld()->GetTimeSeconds() - CachedAttackInputTime <= ComboInputCacheTimeTolerance;
-	if (bComboInputQueued || bHasCachedComboInput)
-	{
-		CachedAttackInputTime = 0.0f;
-		bComboInputQueued = false;
-		++ComboCount;
-
-		if (ComboCount < ComboSectionNames.Num())
-		{
-			NotifyEnemiesOfIncomingAttack();
-
-			if (UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance())
-			{
-				AnimInstance->Montage_JumpToSection(ComboSectionNames[ComboCount], ComboAttackMontage);
-			}
-		}
-
-		return;
-	}
-
+	const bool bShouldContinueCombo = bComboInputQueued;
 	CachedAttackInputTime = 0.0f;
 	bComboInputQueued = false;
-	bPendingComboSheathe = false;
-	TryJumpToComboSheatheSection();
+	bComboInputWindowOpen = false;
+	bComboInputWindowConsumed = false;
+	ComboInputWindowElapsedTime = 0.0f;
+	ComboInputWindowDuration = 0.0f;
+	ComboInputWindowAlpha = 0.0f;
+
+	const int32 NextComboIndex = ComboCount + 1;
+	if (bShouldContinueCombo)
+	{
+		ComboCount = NextComboIndex;
+
+		NotifyEnemiesOfIncomingAttack();
+
+		if (WeaponCollision)
+		{
+			WeaponCollision->ResetHitActors();
+		}
+
+		UE_LOG(LogTemp, Warning, TEXT("ComboWindow ContinueNaturally: Index=%d"), ComboCount);
+		return;
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("ComboWindow Sheathe: Combo=%d ShouldContinue=%d NextIndex=%d HasSheathe=%d Override=%s"),
+		ComboCount,
+		bShouldContinueCombo ? 1 : 0,
+		NextComboIndex,
+		ComboSheatheSectionNames.IsValidIndex(ComboCount) ? 1 : 0,
+		*OverrideSheatheSectionName.ToString());
+
+	if (!TryJumpToComboSheatheSection(OverrideSheatheSectionName))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ComboWindow StopNoInput: Combo=%d"), ComboCount);
+		EndComboMontage();
+	}
+}
+
+void ACombatCharacter::QueueComboInputIfAllowed()
+{
+	const bool bCanAcceptComboInput = !bRequireComboInputWindow || bComboInputWindowOpen;
+	if (!bCanAcceptComboInput || bComboInputWindowConsumed)
+	{
+		return;
+	}
+
+	bComboInputQueued = true;
+	bComboInputWindowConsumed = true;
+	CachedAttackInputTime = 0.0f;
+	UE_LOG(LogTemp, Warning, TEXT("ComboWindow Queued: Combo=%d"), ComboCount);
+}
+
+bool ACombatCharacter::IsComboAttackInputHeld() const
+{
+	if (const APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		if (ComboAttackKey.IsValid() && PlayerController->IsInputKeyDown(ComboAttackKey))
+		{
+			return true;
+		}
+	}
+
+	return bComboAttackHeld;
 }
 
 void ACombatCharacter::ApplyWeaponMovementState()
@@ -568,6 +748,210 @@ void ACombatCharacter::ApplyWeaponMovementState()
 	MovementComponent->BrakingDecelerationWalking = bIsWeaponDrawn ? WeaponDrawnBrakingDeceleration : SheathedBrakingDeceleration;
 }
 
+void ACombatCharacter::ApplyCameraDebugSettings()
+{
+	if (!CameraBoom)
+	{
+		return;
+	}
+
+	if (bUseFrontDebugCamera)
+	{
+		CameraBoom->bUsePawnControlRotation = false;
+		CameraBoom->TargetArmLength = FrontDebugCameraDistance;
+		CameraBoom->SetRelativeRotation(FRotator(FrontDebugCameraPitch, FrontDebugCameraYaw, 0.0f));
+		return;
+	}
+
+	CameraBoom->bUsePawnControlRotation = true;
+	CameraBoom->TargetArmLength = DefaultCameraDistance;
+	CameraBoom->SetRelativeRotation(FRotator::ZeroRotator);
+}
+
+void ACombatCharacter::UpdateWeaponAttachment()
+{
+	AttachWeaponToSocket(ShouldAttachWeaponAsDrawn() ? DrawnWeaponAttachSocketName : SheathedWeaponAttachSocketName);
+}
+
+bool ACombatCharacter::ShouldAttachWeaponAsDrawn() const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !World->IsGameWorld())
+	{
+		return bStartWithWeaponDrawn;
+	}
+
+	return bIsWeaponDrawn;
+}
+
+void ACombatCharacter::AttachWeaponToDrawnSocket()
+{
+	AttachWeaponToSocket(DrawnWeaponAttachSocketName);
+}
+
+void ACombatCharacter::AttachWeaponToSheathedSocket()
+{
+	AttachWeaponToSocket(SheathedWeaponAttachSocketName);
+}
+
+void ACombatCharacter::AttachWeaponToSocket(FName SocketName)
+{
+	if (SocketName == NAME_None)
+	{
+		return;
+	}
+
+	if (WeaponRoot)
+	{
+		WeaponRoot->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketName);
+	}
+
+	AttachNamedWeaponComponents(SocketName);
+}
+
+void ACombatCharacter::AttachComponentToWeaponSocket(USceneComponent* ComponentToAttach, FName SocketName)
+{
+	if (!ComponentToAttach || !GetMesh() || SocketName == NAME_None)
+	{
+		return;
+	}
+
+	if (ComponentToAttach == GetMesh())
+	{
+		return;
+	}
+
+	ComponentToAttach->AttachToComponent(GetMesh(), FAttachmentTransformRules::KeepRelativeTransform, SocketName);
+}
+
+void ACombatCharacter::AttachNamedWeaponComponents(FName SocketName)
+{
+	TArray<USceneComponent*> SceneComponents;
+	GetComponents<USceneComponent>(SceneComponents);
+
+	for (USceneComponent* SceneComponent : SceneComponents)
+	{
+		if (!SceneComponent)
+		{
+			continue;
+		}
+
+		const FName ComponentName = SceneComponent->GetFName();
+		if (ComponentName == DefaultWeaponHitBoxComponentName || ComponentName == DefaultWeaponMeshComponentName)
+		{
+			AttachComponentToWeaponSocket(SceneComponent, SocketName);
+		}
+		else if (ComponentName == DefaultWeaponSheathMeshComponentName)
+		{
+			AttachComponentToWeaponSocket(SceneComponent, SheathedWeaponAttachSocketName);
+		}
+	}
+}
+
+void ACombatCharacter::AutoFitDefaultWeaponHitBox()
+{
+	if (!bAutoFitDefaultWeaponHitBoxToWeaponMesh || DefaultWeaponMeshComponentName == NAME_None || DefaultWeaponHitBoxComponentName == NAME_None)
+	{
+		return;
+	}
+
+	USceneComponent* WeaponMeshComponent = nullptr;
+	UBoxComponent* HitBoxComponent = nullptr;
+
+	TArray<USceneComponent*> SceneComponents;
+	GetComponents<USceneComponent>(SceneComponents);
+	for (USceneComponent* SceneComponent : SceneComponents)
+	{
+		if (!SceneComponent)
+		{
+			continue;
+		}
+
+		if (SceneComponent->GetFName() == DefaultWeaponMeshComponentName)
+		{
+			WeaponMeshComponent = SceneComponent;
+		}
+		else if (SceneComponent->GetFName() == DefaultWeaponHitBoxComponentName)
+		{
+			HitBoxComponent = Cast<UBoxComponent>(SceneComponent);
+		}
+	}
+
+	if (!WeaponMeshComponent || !HitBoxComponent)
+	{
+		return;
+	}
+
+	FVector LocalMin = FVector::ZeroVector;
+	FVector LocalMax = FVector::ZeroVector;
+	if (UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(WeaponMeshComponent))
+	{
+		StaticMeshComponent->GetLocalBounds(LocalMin, LocalMax);
+	}
+	else if (USkinnedMeshComponent* SkinnedMeshComponent = Cast<USkinnedMeshComponent>(WeaponMeshComponent))
+	{
+		const FBoxSphereBounds LocalBounds = SkinnedMeshComponent->GetLocalBounds();
+		LocalMin = LocalBounds.Origin - LocalBounds.BoxExtent;
+		LocalMax = LocalBounds.Origin + LocalBounds.BoxExtent;
+	}
+	else
+	{
+		return;
+	}
+
+	const FVector FullSize = LocalMax - LocalMin;
+	if (FullSize.IsNearlyZero())
+	{
+		return;
+	}
+
+	const int32 LongAxis = FullSize.X >= FullSize.Y && FullSize.X >= FullSize.Z ? 0 : (FullSize.Y >= FullSize.Z ? 1 : 2);
+	const FVector FullCenter = (LocalMin + LocalMax) * 0.5f;
+	FVector BladeCenter = FullCenter;
+	FVector BladeExtent = FullSize * 0.5f;
+
+	BladeExtent[LongAxis] *= AutoFitBladeLengthRatio;
+	BladeCenter[LongAxis] += FullSize[LongAxis] * AutoFitBladeCenterBias;
+
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		if (Axis != LongAxis)
+		{
+			BladeExtent[Axis] *= AutoFitBladeThicknessRatio;
+		}
+
+		BladeExtent[Axis] += AutoFitBladePadding;
+	}
+
+	HitBoxComponent->AttachToComponent(WeaponMeshComponent, FAttachmentTransformRules::KeepRelativeTransform);
+	HitBoxComponent->SetRelativeLocation(BladeCenter);
+	HitBoxComponent->SetRelativeRotation(FRotator::ZeroRotator);
+	HitBoxComponent->SetRelativeScale3D(FVector::OneVector);
+	HitBoxComponent->SetBoxExtent(BladeExtent, true);
+}
+
+void ACombatCharacter::RegisterDefaultWeaponHitBox()
+{
+	if (!bAutoRegisterDefaultWeaponHitBox || !WeaponCollision || DefaultWeaponHitBoxComponentName == NAME_None)
+	{
+		return;
+	}
+
+	TArray<UPrimitiveComponent*> PrimitiveComponents;
+	GetComponents<UPrimitiveComponent>(PrimitiveComponents);
+
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!PrimitiveComponent || PrimitiveComponent->GetFName() != DefaultWeaponHitBoxComponentName)
+		{
+			continue;
+		}
+
+		WeaponCollision->RegisterCollisionBody(PrimitiveComponent, GetActiveWeaponCollisionId());
+		return;
+	}
+}
+
 bool ACombatCharacter::CanAutoSheatheFromCombo() const
 {
 	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
@@ -578,6 +962,18 @@ bool ACombatCharacter::CanAutoSheatheFromCombo() const
 
 	const float GroundSpeed = FVector(MovementComponent->Velocity.X, MovementComponent->Velocity.Y, 0.0f).Size();
 	return GroundSpeed <= AutoSheatheMaxGroundSpeed;
+}
+
+FName ACombatCharacter::GetActiveWeaponCollisionId() const
+{
+	switch (GetActiveWeaponType())
+	{
+	case ECombatWeaponType::Katana:
+		return TEXT("Katana");
+	case ECombatWeaponType::Unarmed:
+	default:
+		return NAME_None;
+	}
 }
 
 void ACombatCharacter::CheckChargedAttack()
@@ -667,7 +1063,10 @@ void ACombatCharacter::HandleDeath()
 	LifeBar->SetHiddenInGame(true);
 
 	// pull back the camera
-	GetCameraBoom()->TargetArmLength = DeathCameraDistance;
+	if (!bUseFrontDebugCamera)
+	{
+		GetCameraBoom()->TargetArmLength = DeathCameraDistance;
+	}
 
 	// schedule respawning
 	GetWorld()->GetTimerManager().SetTimer(RespawnTimer, this, &ACombatCharacter::RespawnCharacter, RespawnTime, false);
@@ -741,7 +1140,7 @@ void ACombatCharacter::BeginPlay()
 	check(LifeBarWidget);
 
 	// initialize the camera
-	GetCameraBoom()->TargetArmLength = DefaultCameraDistance;
+	ApplyCameraDebugSettings();
 
 	// save the relative transform for the mesh so we can reset the ragdoll later
 	MeshStartingTransform = GetMesh()->GetRelativeTransform();
@@ -752,19 +1151,46 @@ void ACombatCharacter::BeginPlay()
 	// reset HP to maximum
 	ResetHP();
 
+	if (WeaponCollision)
+	{
+		WeaponCollision->OnDamageDealt.AddUniqueDynamic(this, &ACombatCharacter::HandleWeaponDamageDealt);
+	}
+
 	CurrentWeaponType = DefaultWeaponType;
 	bIsWeaponDrawn = bStartWithWeaponDrawn && CurrentWeaponType != ECombatWeaponType::Unarmed;
 	bPendingWeaponDrawn = bIsWeaponDrawn;
 	bIsWeaponModeChanging = false;
 	ApplyWeaponMovementState();
+	UpdateWeaponAttachment();
+	AutoFitDefaultWeaponHitBox();
+	RegisterDefaultWeaponHitBox();
 }
 
 void ACombatCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (WeaponCollision)
+	{
+		WeaponCollision->OnDamageDealt.RemoveAll(this);
+	}
+
 	Super::EndPlay(EndPlayReason);
 
 	// clear the respawn timer
 	GetWorld()->GetTimerManager().ClearTimer(RespawnTimer);
+}
+
+void ACombatCharacter::HandleWeaponDamageDealt(float Damage, const FVector& ImpactPoint)
+{
+	DealtDamage(Damage, ImpactPoint);
+}
+
+void ACombatCharacter::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	ApplyCameraDebugSettings();
+	UpdateWeaponAttachment();
+	AutoFitDefaultWeaponHitBox();
+	RegisterDefaultWeaponHitBox();
 }
 
 void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
@@ -775,28 +1201,48 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	if (UEnhancedInputComponent* EnhancedInputComponent = Cast<UEnhancedInputComponent>(PlayerInputComponent))
 	{
 		// Jumping
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+		if (JumpAction)
+		{
+			EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &ACharacter::Jump);
+			EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &ACharacter::StopJumping);
+		}
 
 		// Moving
-		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ACombatCharacter::Move);
+		if (MoveAction)
+		{
+			EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &ACombatCharacter::Move);
+		}
 
 		// Looking
-		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &ACombatCharacter::Look);
-		EnhancedInputComponent->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &ACombatCharacter::Look);
+		if (LookAction)
+		{
+			EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &ACombatCharacter::Look);
+		}
+
+		if (MouseLookAction)
+		{
+			EnhancedInputComponent->BindAction(MouseLookAction, ETriggerEvent::Triggered, this, &ACombatCharacter::Look);
+		}
 
 		// Combo Attack
 		if (ComboAttackAction)
 		{
 			EnhancedInputComponent->BindAction(ComboAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ComboAttackPressed);
+			EnhancedInputComponent->BindAction(ComboAttackAction, ETriggerEvent::Completed, this, &ACombatCharacter::DoComboAttackEnd);
 		}
 
 		// Charged Attack
-		EnhancedInputComponent->BindAction(ChargedAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ChargedAttackPressed);
-		EnhancedInputComponent->BindAction(ChargedAttackAction, ETriggerEvent::Completed, this, &ACombatCharacter::ChargedAttackReleased);
+		if (ChargedAttackAction)
+		{
+			EnhancedInputComponent->BindAction(ChargedAttackAction, ETriggerEvent::Started, this, &ACombatCharacter::ChargedAttackPressed);
+			EnhancedInputComponent->BindAction(ChargedAttackAction, ETriggerEvent::Completed, this, &ACombatCharacter::ChargedAttackReleased);
+		}
 
 		// Camera Side Toggle
-		EnhancedInputComponent->BindAction(ToggleCameraAction, ETriggerEvent::Triggered, this, &ACombatCharacter::ToggleCamera);
+		if (ToggleCameraAction)
+		{
+			EnhancedInputComponent->BindAction(ToggleCameraAction, ETriggerEvent::Triggered, this, &ACombatCharacter::ToggleCamera);
+		}
 
 		// Weapon Mode Toggle
 		if (ToggleWeaponModeAction)
@@ -813,6 +1259,7 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	if (ComboAttackKey.IsValid())
 	{
 		PlayerInputComponent->BindKey(ComboAttackKey, IE_Pressed, this, &ACombatCharacter::ComboAttackPressed);
+		PlayerInputComponent->BindKey(ComboAttackKey, IE_Released, this, &ACombatCharacter::DoComboAttackEnd);
 	}
 }
 

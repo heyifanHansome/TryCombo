@@ -30,6 +30,7 @@ public class TryComboWepon : ModuleRules
 			"TryComboWepon/Variant_Combat",
 			"TryComboWepon/Variant_Combat/AI",
 			"TryComboWepon/Variant_Combat/Animation",
+			"TryComboWepon/Variant_Combat/Components",
 			"TryComboWepon/Variant_Combat/Gameplay",
 			"TryComboWepon/Variant_Combat/Interfaces",
 			"TryComboWepon/Variant_Combat/UI",
