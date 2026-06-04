@@ -113,6 +113,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Damage")
 	FLinearColor LifeBarColor;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Damage")
+	bool bShowLifeBar = false;
+
 	/** Name of the pelvis bone, for damage ragdoll physics */
 	UPROPERTY(EditAnywhere, Category="Damage")
 	FName PelvisBoneName;

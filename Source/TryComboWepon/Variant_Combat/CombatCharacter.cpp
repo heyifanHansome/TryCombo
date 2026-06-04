@@ -98,6 +98,8 @@ ACombatCharacter::ACombatCharacter()
 	// create the life bar widget component
 	LifeBar = CreateDefaultSubobject<UWidgetComponent>(TEXT("LifeBar"));
 	LifeBar->SetupAttachment(RootComponent);
+	LifeBar->SetVisibility(false);
+	LifeBar->SetHiddenInGame(true);
 
 	WeaponCollision = CreateDefaultSubobject<UCombatWeaponCollisionComponent>(TEXT("WeaponCollision"));
 
@@ -1138,6 +1140,8 @@ void ACombatCharacter::BeginPlay()
 	// get the life bar from the widget component
 	LifeBarWidget = Cast<UCombatLifeBar>(LifeBar->GetUserWidgetObject());
 	check(LifeBarWidget);
+	LifeBar->SetVisibility(bShowLifeBar);
+	LifeBar->SetHiddenInGame(!bShowLifeBar);
 
 	// initialize the camera
 	ApplyCameraDebugSettings();

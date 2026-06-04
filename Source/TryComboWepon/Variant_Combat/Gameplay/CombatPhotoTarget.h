@@ -11,6 +11,7 @@ class UBoxComponent;
 class UBillboardComponent;
 class USceneComponent;
 class UStaticMeshComponent;
+class USoundBase;
 class UTexture2D;
 class UWidgetComponent;
 
@@ -60,7 +61,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Photo Target", meta=(ClampMin=0.001))
 	float WidgetWorldScale = 0.35f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Damage", meta=(ClampMin=1, ClampMax=1000))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Damage", meta=(ClampMin=1, ClampMax=1000, DisplayName="Max HP / Hits To Popup"))
 	float MaxHP = 20.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Damage", meta=(ClampMin=0, ClampMax=1000))
@@ -92,6 +93,30 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Meme Target", meta=(ClampMin=0.1, ClampMax=30, Units="s"))
 	float MemePopupDuration = 4.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack Test")
+	bool bShowPopupOnHit = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack Test")
+	bool bBlockCharacters = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Meme Target|Audio")
+	TObjectPtr<USoundBase> PopupSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Meme Target|Audio", meta=(ClampMin=0))
+	float PopupSoundVolume = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Meme Target|Audio", meta=(ClampMin=0.01))
+	float PopupSoundPitch = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Meme Target|Audio")
+	TObjectPtr<USoundBase> HitSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Meme Target|Audio", meta=(ClampMin=0))
+	float HitSoundVolume = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Meme Target|Audio", meta=(ClampMin=0.01))
+	float HitSoundPitch = 1.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Meme Target")
 	int32 CurrentPhotoIndex = 0;
@@ -126,8 +151,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Photo Target")
 	bool AdvancePhoto();
 
+	UFUNCTION(BlueprintCallable, Category="Attack Test")
+	void SetShowPopupOnHit(bool bNewShowPopupOnHit);
+
+	UFUNCTION(BlueprintCallable, Category="Attack Test")
+	void SetBlockCharacters(bool bNewBlockCharacters);
+
+	UFUNCTION(BlueprintCallable, Category="Attack Test")
+	void TestPopup();
+
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	virtual void ApplyDamage(float Damage, AActor* DamageCauser, const FVector& DamageLocation, const FVector& DamageImpulse) override;
 	virtual void HandleDeath() override;
@@ -145,6 +182,7 @@ protected:
 	int32 GetPhotoCount() const;
 	FString GetCurrentHitPhrase() const;
 	FString GetCurrentDeathPhrase() const;
+	void ConfigureTargetCollision();
 	void UpdateTargetShape();
 	void ApplyTextureToWidget();
 	void ApplyTextureToBillboard();

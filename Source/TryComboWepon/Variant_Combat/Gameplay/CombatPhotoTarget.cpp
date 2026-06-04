@@ -11,6 +11,7 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2D.h"
 #include "ImageUtils.h"
+#include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -23,13 +24,7 @@ ACombatPhotoTarget::ACombatPhotoTarget()
 
 	HitBox = CreateDefaultSubobject<UBoxComponent>(TEXT("HitBox"));
 	HitBox->SetupAttachment(Root);
-	HitBox->SetCollisionObjectType(ECC_WorldDynamic);
-	HitBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	HitBox->SetGenerateOverlapEvents(true);
-	HitBox->SetCollisionResponseToAllChannels(ECR_Ignore);
-	HitBox->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
-	HitBox->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-	HitBox->SetCanEverAffectNavigation(false);
+	ConfigureTargetCollision();
 
 	TargetMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TargetMesh"));
 	TargetMesh->SetupAttachment(Root);
@@ -96,6 +91,7 @@ void ACombatPhotoTarget::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	EnsureDefaultGallery();
+	ConfigureTargetCollision();
 	UpdateTargetShape();
 	ReloadPhoto();
 	HideMemePopup();
@@ -106,10 +102,20 @@ void ACombatPhotoTarget::BeginPlay()
 	Super::BeginPlay();
 	CurrentHP = MaxHP;
 	EnsureDefaultGallery();
+	ConfigureTargetCollision();
 	UpdateTargetShape();
 	ReloadPhoto();
 	HideMemePopup();
 }
+
+#if WITH_EDITOR
+void ACombatPhotoTarget::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	ConfigureTargetCollision();
+	UpdateTargetShape();
+}
+#endif
 
 bool ACombatPhotoTarget::ReloadPhoto()
 {
@@ -212,6 +218,22 @@ bool ACombatPhotoTarget::AdvancePhoto()
 	return SetPhotoIndex((CurrentPhotoIndex + 1) % PhotoCount);
 }
 
+void ACombatPhotoTarget::SetShowPopupOnHit(bool bNewShowPopupOnHit)
+{
+	bShowPopupOnHit = bNewShowPopupOnHit;
+}
+
+void ACombatPhotoTarget::SetBlockCharacters(bool bNewBlockCharacters)
+{
+	bBlockCharacters = bNewBlockCharacters;
+	ConfigureTargetCollision();
+}
+
+void ACombatPhotoTarget::TestPopup()
+{
+	ShowMemePopup();
+}
+
 bool ACombatPhotoTarget::LoadTextureForCurrentIndex()
 {
 	if (PhotoTextures.IsValidIndex(CurrentPhotoIndex) && PhotoTextures[CurrentPhotoIndex])
@@ -290,7 +312,7 @@ void ACombatPhotoTarget::ApplyDamage(float Damage, AActor* DamageCauser, const F
 	++TotalHits;
 	++HitsOnCurrentPhoto;
 	Score += FMath::Max(1, FMath::RoundToInt(Damage * 10.0f));
-	CurrentHP = FMath::Clamp(CurrentHP - Damage, 0.0f, MaxHP);
+	CurrentHP = FMath::Clamp(CurrentHP - 1.0f, 0.0f, MaxHP);
 
 	const FVector ImpactPoint = DamageLocation.IsNearlyZero() ? GetActorLocation() : DamageLocation;
 	UE_LOG(LogTemp, Warning, TEXT("Photo target hit. Damage=%.2f RemainingHP=%.2f Causer=%s Impact=%s"),
@@ -301,6 +323,11 @@ void ACombatPhotoTarget::ApplyDamage(float Damage, AActor* DamageCauser, const F
 
 	const FString HitPhrase = GetCurrentHitPhrase();
 	PrintDebugMessage(FString::Printf(TEXT("%s | SCORE %d | HP %.1f | PIC %d/%d"), *HitPhrase, Score, CurrentHP, CurrentPhotoIndex + 1, GetPhotoCount()), FColor::Green);
+
+	if (HitSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, HitSound, ImpactPoint, HitSoundVolume, HitSoundPitch);
+	}
 
 	if (bDrawDebugOnHit && GetWorld())
 	{
@@ -317,12 +344,17 @@ void ACombatPhotoTarget::ApplyDamage(float Damage, AActor* DamageCauser, const F
 		return;
 	}
 
-	if (!bShowPhotoOnlyOnDeath && bAdvancePhotoOnHit && HitsOnCurrentPhoto >= HitsPerPhoto)
+	if (bShowPopupOnHit && !bShowPhotoOnlyOnDeath)
 	{
-		if (AdvancePhoto())
+		if (bAdvancePhotoOnHit && HitsOnCurrentPhoto >= HitsPerPhoto)
 		{
-			PrintDebugMessage(FString::Printf(TEXT("PHOTO SHUFFLE -> %d/%d"), CurrentPhotoIndex + 1, GetPhotoCount()), FColor::Yellow);
+			if (AdvancePhoto())
+			{
+				PrintDebugMessage(FString::Printf(TEXT("PHOTO SHUFFLE -> %d/%d"), CurrentPhotoIndex + 1, GetPhotoCount()), FColor::Yellow);
+			}
 		}
+
+		ShowMemePopup();
 	}
 }
 
@@ -352,8 +384,25 @@ void ACombatPhotoTarget::NotifyDanger(const FVector& DangerLocation, AActor* Dan
 	// The photo target is a static test object.
 }
 
+void ACombatPhotoTarget::ConfigureTargetCollision()
+{
+	if (!HitBox)
+	{
+		return;
+	}
+
+	HitBox->SetCollisionObjectType(ECC_WorldDynamic);
+	HitBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	HitBox->SetGenerateOverlapEvents(true);
+	HitBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	HitBox->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Overlap);
+	HitBox->SetCollisionResponseToChannel(ECC_Pawn, bBlockCharacters ? ECR_Block : ECR_Overlap);
+	HitBox->SetCanEverAffectNavigation(false);
+}
+
 void ACombatPhotoTarget::UpdateTargetShape()
 {
+	ConfigureTargetCollision();
 	const FVector2D SafeSize(FMath::Max(TargetSize.X, 1.0f), FMath::Max(TargetSize.Y, 1.0f));
 	HitBox->SetBoxExtent(FVector(8.0f, SafeSize.X * 0.5f, SafeSize.Y * 0.5f));
 	TargetMesh->SetRelativeScale3D(FVector(0.08f, SafeSize.X / 100.0f, SafeSize.Y / 100.0f));
@@ -398,21 +447,27 @@ void ACombatPhotoTarget::ApplyTextureToVisuals()
 
 void ACombatPhotoTarget::ShowMemePopup()
 {
-	if (!ReloadPhoto())
+	const bool bHasPhoto = ReloadPhoto();
+	if (!bHasPhoto)
 	{
-		return;
+		PrintDebugMessage(TEXT("PHOTO POPUP TRIGGERED, BUT PHOTO LOAD FAILED"), FColor::Red);
 	}
 
-	if (PhotoWidget)
+	if (PhotoWidget && bHasPhoto)
 	{
 		PhotoWidget->SetVisibility(true);
 		PhotoWidget->SetHiddenInGame(false);
 	}
 
-	if (PhotoBillboard)
+	if (PhotoBillboard && bHasPhoto)
 	{
 		PhotoBillboard->SetVisibility(true);
 		PhotoBillboard->SetHiddenInGame(false);
+	}
+
+	if (PopupSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, PopupSound, GetActorLocation(), PopupSoundVolume, PopupSoundPitch);
 	}
 
 	if (GetWorld())
