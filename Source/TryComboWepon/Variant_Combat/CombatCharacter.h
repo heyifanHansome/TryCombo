@@ -120,6 +120,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Damage")
 	FName PelvisBoneName;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Damage", meta=(ClampMin=0, ClampMax=5, Units="s"))
+	float DamageReactionDuration = 1.0f;
+
 	/** Pointer to the life bar widget */
 	UPROPERTY(EditAnywhere, Category="Damage")
 	TObjectPtr<UCombatLifeBar> LifeBarWidget;
@@ -355,6 +358,8 @@ protected:
 	/** Character respawn timer */
 	FTimerHandle RespawnTimer;
 
+	FTimerHandle DamageReactionTimer;
+
 	/** Copy of the mesh's transform so we can reset it after ragdoll animations */
 	FTransform MeshStartingTransform;
 
@@ -585,6 +590,8 @@ protected:
 
 	UFUNCTION()
 	void HandleWeaponDamageDealt(float Damage, const FVector& ImpactPoint);
+
+	void ClearDamageReaction();
 
 	/** Blueprint handler to play damage received effects */
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")

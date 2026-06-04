@@ -234,6 +234,26 @@ void ACombatPhotoTarget::TestPopup()
 	ShowMemePopup();
 }
 
+void ACombatPhotoTarget::TriggerBasketballPopup()
+{
+	if (bRandomizePhotoOnBasketballHit)
+	{
+		const int32 PhotoCount = GetPhotoCount();
+		if (PhotoCount > 1)
+		{
+			int32 NextPhotoIndex = CurrentPhotoIndex;
+			while (NextPhotoIndex == CurrentPhotoIndex)
+			{
+				NextPhotoIndex = FMath::RandRange(0, PhotoCount - 1);
+			}
+
+			SetPhotoIndex(NextPhotoIndex);
+		}
+	}
+
+	ShowMemePopup();
+}
+
 bool ACombatPhotoTarget::LoadTextureForCurrentIndex()
 {
 	if (PhotoTextures.IsValidIndex(CurrentPhotoIndex) && PhotoTextures[CurrentPhotoIndex])

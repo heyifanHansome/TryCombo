@@ -1049,6 +1049,12 @@ void ACombatCharacter::ApplyDamage(float Damage, AActor* DamageCauser, const FVe
 
 		// pass control to BP to play effects, etc.
 		ReceivedDamage(ActualDamage, DamageLocation, DamageImpulse.GetSafeNormal());
+
+		if (DamageReactionDuration > 0.0f && GetWorld())
+		{
+			GetWorld()->GetTimerManager().ClearTimer(DamageReactionTimer);
+			GetWorld()->GetTimerManager().SetTimer(DamageReactionTimer, this, &ACombatCharacter::ClearDamageReaction, DamageReactionDuration, false);
+		}
 	}
 
 }
@@ -1125,12 +1131,7 @@ void ACombatCharacter::Landed(const FHitResult& Hit)
 {
 	Super::Landed(Hit);
 
-	// is the character still alive?
-	if (CurrentHP >= 0.0f)
-	{
-		// disable ragdoll physics
-		GetMesh()->SetPhysicsBlendWeight(0.0f);
-	}
+	ClearDamageReaction();
 }
 
 void ACombatCharacter::BeginPlay()
@@ -1181,11 +1182,20 @@ void ACombatCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	// clear the respawn timer
 	GetWorld()->GetTimerManager().ClearTimer(RespawnTimer);
+	GetWorld()->GetTimerManager().ClearTimer(DamageReactionTimer);
 }
 
 void ACombatCharacter::HandleWeaponDamageDealt(float Damage, const FVector& ImpactPoint)
 {
 	DealtDamage(Damage, ImpactPoint);
+}
+
+void ACombatCharacter::ClearDamageReaction()
+{
+	if (CurrentHP > 0.0f && GetMesh())
+	{
+		GetMesh()->SetPhysicsBlendWeight(0.0f);
+	}
 }
 
 void ACombatCharacter::OnConstruction(const FTransform& Transform)

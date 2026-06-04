@@ -100,6 +100,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack Test")
 	bool bBlockCharacters = true;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Attack Test")
+	bool bRandomizePhotoOnBasketballHit = true;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Meme Target|Audio")
 	TObjectPtr<USoundBase> PopupSound;
 
@@ -159,6 +162,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Attack Test")
 	void TestPopup();
+
+	UFUNCTION(BlueprintCallable, Category="Attack Test")
+	void TriggerBasketballPopup();
 
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
