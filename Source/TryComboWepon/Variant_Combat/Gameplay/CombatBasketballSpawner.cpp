@@ -60,7 +60,7 @@ void ACombatBasketballSpawner::CleanupDeadBasketballs()
 
 void ACombatBasketballSpawner::SpawnBasketballFromTimer()
 {
-	SpawnBasketball();
+	SpawnBasketballWave(BasketballsPerSpawn);
 }
 
 ECombatBasketballHitType ACombatBasketballSpawner::PickBasketballType() const
@@ -125,4 +125,16 @@ ACombatFlyingBasketball* ACombatBasketballSpawner::SpawnBasketball()
 	}
 
 	return Basketball;
+}
+
+void ACombatBasketballSpawner::SpawnBasketballWave(int32 Count)
+{
+	const int32 SafeCount = FMath::Max(1, Count);
+	for (int32 Index = 0; Index < SafeCount; ++Index)
+	{
+		if (!SpawnBasketball())
+		{
+			break;
+		}
+	}
 }

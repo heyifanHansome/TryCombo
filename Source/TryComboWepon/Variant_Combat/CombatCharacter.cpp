@@ -23,6 +23,13 @@
 #include "Engine/LocalPlayer.h"
 #include "CombatPlayerController.h"
 #include "Components/CombatWeaponCollisionComponent.h"
+#include "EngineUtils.h"
+#include "Gameplay/CombatBasketballSpawner.h"
+#include "Gameplay/CombatFlyingBasketball.h"
+#include "Gameplay/CombatSummonMarker.h"
+#include "Gameplay/CombatSummonShot.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
 #include "UObject/ConstructorHelpers.h"
 
 ACombatCharacter::ACombatCharacter()
@@ -106,6 +113,9 @@ ACombatCharacter::ACombatCharacter()
 	WeaponRoot = CreateDefaultSubobject<USceneComponent>(TEXT("WeaponRoot"));
 	WeaponRoot->SetupAttachment(GetMesh(), SheathedWeaponAttachSocketName);
 
+	SummonMarkerClass = ACombatSummonMarker::StaticClass();
+	SummonShotClass = ACombatSummonShot::StaticClass();
+
 	// set the player tag
 	Tags.Add(FName("Player"));
 }
@@ -154,6 +164,11 @@ void ACombatCharacter::ToggleCamera()
 void ACombatCharacter::ToggleWeaponModePressed()
 {
 	ToggleWeaponMode();
+}
+
+void ACombatCharacter::FireJutsuPressed()
+{
+	DoFireJutsu();
 }
 
 void ACombatCharacter::DoMove(float Right, float Forward)
@@ -285,6 +300,217 @@ void ACombatCharacter::SetWeaponModeMontages(UAnimMontage* NewDrawMontage, UAnim
 	SheatheWeaponMontage = NewSheatheMontage;
 }
 
+bool ACombatCharacter::DoBackJump()
+{
+	if (!GetCharacterMovement() || CurrentHP <= 0.0f)
+	{
+		return false;
+	}
+
+	if (bBackJumpStopAttackMontage)
+	{
+		EndComboMontage(0.05f);
+	}
+
+	if (BackJumpMontage)
+	{
+		PlayAnimMontage(BackJumpMontage);
+	}
+
+	FVector LaunchVelocity = -GetActorForwardVector() * BackJumpBackwardSpeed;
+	LaunchVelocity.Z = BackJumpUpSpeed;
+	LaunchCharacter(LaunchVelocity, true, true);
+	return true;
+}
+
+bool ACombatCharacter::DoSummonTest()
+{
+	if (CurrentHP <= 0.0f || !GetWorld())
+	{
+		return false;
+	}
+
+	if (SummonMontage)
+	{
+		PlayAnimMontage(SummonMontage);
+	}
+
+	SpawnSummonMarkers();
+
+	if (bSummonSpawnBasketballWave)
+	{
+		if (ACombatBasketballSpawner* Spawner = FindNearestBasketballSpawner(SummonSpawnerSearchRadius))
+		{
+			Spawner->SpawnBasketballWave(SummonBasketballWaveCount);
+		}
+	}
+
+	TArray<ACombatFlyingBasketball*> TargetBasketballs;
+	FindNearestBasketballs(SummonTargetSearchRadius, SummonMaxTargets, TargetBasketballs);
+	for (int32 Index = 0; Index < TargetBasketballs.Num(); ++Index)
+	{
+		FireSummonShotAt(TargetBasketballs[Index], Index, TargetBasketballs.Num());
+	}
+
+	return TargetBasketballs.Num() > 0;
+}
+
+bool ACombatCharacter::DoFireJutsu()
+{
+	if (CurrentHP <= 0.0f || !GetWorld())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FireJutsu skipped: invalid state. HP=%.2f World=%d"), CurrentHP, GetWorld() ? 1 : 0);
+		return false;
+	}
+
+	bool bPlayedMontage = false;
+	if (FireJutsuMontage)
+	{
+		PlayAnimMontage(FireJutsuMontage);
+		bPlayedMontage = true;
+	}
+
+	if (bFireJutsuTriggerVfxOnCast)
+	{
+		TriggerFireJutsuVfx();
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("FireJutsu cast: Montage=%d VFX=%d TriggerOnCast=%d"),
+		bPlayedMontage ? 1 : 0,
+		FireJutsuVfx ? 1 : 0,
+		bFireJutsuTriggerVfxOnCast ? 1 : 0);
+
+	return bPlayedMontage || FireJutsuVfx != nullptr;
+}
+
+void ACombatCharacter::TriggerFireJutsuVfx()
+{
+	if (!FireJutsuVfx)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FireJutsu VFX skipped: FireJutsuVfx is not set."));
+		return;
+	}
+
+	if (!GetMesh())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FireJutsu VFX skipped: character mesh is missing."));
+		return;
+	}
+
+	if (GetWorld())
+	{
+		GetWorld()->GetTimerManager().ClearTimer(FireJutsuVfxTimer);
+	}
+
+	StopFireJutsuVfx();
+
+	const bool bHasFireSocket = GetMesh()->DoesSocketExist(FireJutsuSocketName);
+	const FTransform SourceTransform = bHasFireSocket
+		? GetMesh()->GetSocketTransform(FireJutsuSocketName, RTS_World)
+		: GetActorTransform();
+	const FVector SourceLocation = bHasFireSocket
+		? SourceTransform.TransformPosition(FireJutsuVfxRelativeLocation)
+		: GetActorLocation() + GetActorForwardVector() * 120.0f + FVector::UpVector * 80.0f;
+	const FRotator SourceRotation = GetActorRotation() + FireJutsuVfxRelativeRotation;
+	const FVector Forward = GetActorForwardVector().GetSafeNormal();
+	const FVector Right = GetActorRightVector().GetSafeNormal();
+	const FVector Up = FVector::UpVector;
+	const int32 SegmentCount = FMath::Max(FireJutsuVfxSegments, 1);
+
+	if (bHasFireSocket)
+	{
+		ActiveFireJutsuVfx = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this,
+			FireJutsuVfx,
+			SourceLocation,
+			SourceRotation,
+			FireJutsuVfxScale,
+			true,
+			true);
+
+		UE_LOG(LogTemp, Warning, TEXT("FireJutsu VFX spawned from socket '%s' using actor forward direction."), *FireJutsuSocketName.ToString());
+	}
+	else
+	{
+		ActiveFireJutsuVfx = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this,
+			FireJutsuVfx,
+			SourceLocation,
+			SourceRotation,
+			FireJutsuVfxScale,
+			true,
+			true);
+
+		UE_LOG(LogTemp, Warning, TEXT("FireJutsu socket '%s' not found. Spawned VFX at fallback world location."), *FireJutsuSocketName.ToString());
+	}
+
+	if (ActiveFireJutsuVfx)
+	{
+		ActiveFireJutsuVfx->SetRelativeScale3D(FireJutsuVfxScale);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("FireJutsu VFX spawn failed."));
+	}
+
+	for (int32 Index = 0; Index < SegmentCount; ++Index)
+	{
+		const float Alpha = SegmentCount > 1 ? static_cast<float>(Index) / static_cast<float>(SegmentCount - 1) : 0.0f;
+		const float Distance = FMath::Lerp(120.0f, FireJutsuVfxRange, Alpha);
+		const float Width = FMath::Lerp(0.0f, FireJutsuVfxWidth, Alpha);
+		const float SideSign = Index % 2 == 0 ? -1.0f : 1.0f;
+		const float SideOffset = SideSign * Width * 0.28f;
+		const float HeightOffset = FMath::Sin(Alpha * PI) * FireJutsuVfxWidth * 0.18f;
+		const FVector SegmentLocation = SourceLocation + Forward * Distance + Right * SideOffset + Up * HeightOffset;
+		const FVector SegmentScale = FireJutsuVfxScale * FMath::Lerp(1.0f, FireJutsuVfxEndScaleMultiplier, Alpha);
+
+		UNiagaraComponent* SegmentVfx = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this,
+			FireJutsuVfx,
+			SegmentLocation,
+			SourceRotation,
+			SegmentScale,
+			true,
+			true);
+
+		if (SegmentVfx)
+		{
+			ActiveFireJutsuVfxSegments.Add(SegmentVfx);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("FireJutsu breath spawned %d VFX segments. Range=%.1f Width=%.1f"),
+		ActiveFireJutsuVfxSegments.Num(),
+		FireJutsuVfxRange,
+		FireJutsuVfxWidth);
+
+	if (GetWorld() && FireJutsuVfxDuration > 0.0f)
+	{
+		GetWorld()->GetTimerManager().SetTimer(FireJutsuVfxTimer, this, &ACombatCharacter::StopFireJutsuVfx, FireJutsuVfxDuration, false);
+	}
+}
+
+void ACombatCharacter::StopFireJutsuVfx()
+{
+	if (ActiveFireJutsuVfx)
+	{
+		ActiveFireJutsuVfx->Deactivate();
+		ActiveFireJutsuVfx->DestroyComponent();
+		ActiveFireJutsuVfx = nullptr;
+	}
+
+	for (UNiagaraComponent* SegmentVfx : ActiveFireJutsuVfxSegments)
+	{
+		if (SegmentVfx)
+		{
+			SegmentVfx->Deactivate();
+			SegmentVfx->DestroyComponent();
+		}
+	}
+
+	ActiveFireJutsuVfxSegments.Reset();
+}
+
 void ACombatCharacter::BeginComboInputWindow(float WindowDuration)
 {
 	if (!bIsAttacking || bIsChargingAttack || bPendingComboSheathe)
@@ -362,6 +588,11 @@ void ACombatCharacter::EndComboMontage(float BlendOutTime)
 }
 
 float ACombatCharacter::GetGroundSpeed() const
+{
+	return SmoothedGroundSpeed;
+}
+
+float ACombatCharacter::GetRawGroundSpeed() const
 {
 	const UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
 	if (!MovementComponent)
@@ -1171,18 +1402,35 @@ void ACombatCharacter::BeginPlay()
 	RegisterDefaultWeaponHitBox();
 }
 
+void ACombatCharacter::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	const float TargetGroundSpeed = GetRawGroundSpeed();
+	const float InterpSpeed = TargetGroundSpeed > SmoothedGroundSpeed ? AnimationSpeedAcceleration : AnimationSpeedDeceleration;
+	SmoothedGroundSpeed = FMath::FInterpConstantTo(SmoothedGroundSpeed, TargetGroundSpeed, DeltaSeconds, InterpSpeed);
+}
+
 void ACombatCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	OnAttackMontageEnded.Unbind();
+	OnWeaponModeMontageEnded.Unbind();
+
 	if (WeaponCollision)
 	{
 		WeaponCollision->OnDamageDealt.RemoveAll(this);
 	}
 
-	Super::EndPlay(EndPlayReason);
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(RespawnTimer);
+		World->GetTimerManager().ClearTimer(DamageReactionTimer);
+		World->GetTimerManager().ClearTimer(FireJutsuVfxTimer);
+	}
 
-	// clear the respawn timer
-	GetWorld()->GetTimerManager().ClearTimer(RespawnTimer);
-	GetWorld()->GetTimerManager().ClearTimer(DamageReactionTimer);
+	StopFireJutsuVfx();
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void ACombatCharacter::HandleWeaponDamageDealt(float Damage, const FVector& ImpactPoint)
@@ -1195,6 +1443,131 @@ void ACombatCharacter::ClearDamageReaction()
 	if (CurrentHP > 0.0f && GetMesh())
 	{
 		GetMesh()->SetPhysicsBlendWeight(0.0f);
+	}
+}
+
+void ACombatCharacter::FindNearestBasketballs(float SearchRadius, int32 MaxTargets, TArray<ACombatFlyingBasketball*>& OutBasketballs) const
+{
+	OutBasketballs.Reset();
+
+	UWorld* World = GetWorld();
+	if (!World || MaxTargets <= 0)
+	{
+		return;
+	}
+
+	struct FBasketballCandidate
+	{
+		TObjectPtr<ACombatFlyingBasketball> Basketball;
+		float DistanceSquared = 0.0f;
+	};
+
+	TArray<FBasketballCandidate> Candidates;
+	const float MaxDistanceSquared = FMath::Square(SearchRadius);
+
+	for (TActorIterator<ACombatFlyingBasketball> It(World); It; ++It)
+	{
+		ACombatFlyingBasketball* Candidate = *It;
+		if (!Candidate)
+		{
+			continue;
+		}
+
+		const float DistanceSquared = FVector::DistSquared(GetActorLocation(), Candidate->GetActorLocation());
+		if (DistanceSquared <= MaxDistanceSquared)
+		{
+			FBasketballCandidate Entry;
+			Entry.Basketball = Candidate;
+			Entry.DistanceSquared = DistanceSquared;
+			Candidates.Add(Entry);
+		}
+	}
+
+	Candidates.Sort([](const FBasketballCandidate& Left, const FBasketballCandidate& Right)
+	{
+		return Left.DistanceSquared < Right.DistanceSquared;
+	});
+
+	const int32 TargetCount = FMath::Min(MaxTargets, Candidates.Num());
+	for (int32 Index = 0; Index < TargetCount; ++Index)
+	{
+		if (Candidates[Index].Basketball)
+		{
+			OutBasketballs.Add(Candidates[Index].Basketball);
+		}
+	}
+}
+
+ACombatBasketballSpawner* ACombatCharacter::FindNearestBasketballSpawner(float SearchRadius) const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	ACombatBasketballSpawner* BestSpawner = nullptr;
+	float BestDistanceSquared = FMath::Square(SearchRadius);
+
+	for (TActorIterator<ACombatBasketballSpawner> It(World); It; ++It)
+	{
+		ACombatBasketballSpawner* Candidate = *It;
+		if (!Candidate)
+		{
+			continue;
+		}
+
+		const float DistanceSquared = FVector::DistSquared(GetActorLocation(), Candidate->GetActorLocation());
+		if (DistanceSquared < BestDistanceSquared)
+		{
+			BestDistanceSquared = DistanceSquared;
+			BestSpawner = Candidate;
+		}
+	}
+
+	return BestSpawner;
+}
+
+void ACombatCharacter::SpawnSummonMarkers()
+{
+	if (!GetWorld() || !SummonMarkerClass || SummonMarkerCount <= 0)
+	{
+		return;
+	}
+
+	for (int32 Index = 0; Index < SummonMarkerCount; ++Index)
+	{
+		const float Alpha = static_cast<float>(Index) / static_cast<float>(SummonMarkerCount);
+		const float Angle = Alpha * 2.0f * PI;
+		const FVector Offset(FMath::Cos(Angle) * SummonMarkerRadius, FMath::Sin(Angle) * SummonMarkerRadius, 0.0f);
+		FVector SpawnLocation = GetActorLocation() + Offset;
+		SpawnLocation.Z -= GetCapsuleComponent() ? GetCapsuleComponent()->GetScaledCapsuleHalfHeight() : 90.0f;
+
+		GetWorld()->SpawnActor<ACombatSummonMarker>(SummonMarkerClass, SpawnLocation, FRotator(0.0f, FMath::RadiansToDegrees(Angle), 0.0f));
+	}
+}
+
+void ACombatCharacter::FireSummonShotAt(AActor* TargetActor, int32 ShotIndex, int32 ShotCount)
+{
+	if (!GetWorld() || !SummonShotClass || !TargetActor)
+	{
+		return;
+	}
+
+	const int32 SafeShotCount = FMath::Max(ShotCount, 1);
+	const float Alpha = static_cast<float>(ShotIndex) / static_cast<float>(SafeShotCount);
+	const float Angle = Alpha * 2.0f * PI;
+	const FVector RingOffset(FMath::Cos(Angle) * SummonShotSpawnRadius, FMath::Sin(Angle) * SummonShotSpawnRadius, 0.0f);
+	const FVector SpawnLocation = GetActorLocation() + RingOffset + FVector::UpVector * SummonShotSpawnHeight;
+	const FRotator SpawnRotation = (TargetActor->GetActorLocation() - SpawnLocation).Rotation();
+
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Owner = this;
+
+	ACombatSummonShot* Shot = GetWorld()->SpawnActor<ACombatSummonShot>(SummonShotClass, SpawnLocation, SpawnRotation, SpawnParams);
+	if (Shot)
+	{
+		Shot->FireAtTarget(TargetActor);
 	}
 }
 
@@ -1274,6 +1647,11 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	{
 		PlayerInputComponent->BindKey(ComboAttackKey, IE_Pressed, this, &ACombatCharacter::ComboAttackPressed);
 		PlayerInputComponent->BindKey(ComboAttackKey, IE_Released, this, &ACombatCharacter::DoComboAttackEnd);
+	}
+
+	if (FireJutsuKey.IsValid())
+	{
+		PlayerInputComponent->BindKey(FireJutsuKey, IE_Pressed, this, &ACombatCharacter::FireJutsuPressed);
 	}
 }
 

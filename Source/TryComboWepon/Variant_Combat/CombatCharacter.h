@@ -18,6 +18,12 @@ struct FInputActionValue;
 class UCombatLifeBar;
 class UCombatWeaponCollisionComponent;
 class UWidgetComponent;
+class UNiagaraComponent;
+class UNiagaraSystem;
+class ACombatFlyingBasketball;
+class ACombatBasketballSpawner;
+class ACombatSummonMarker;
+class ACombatSummonShot;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
 
@@ -100,6 +106,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
 	FKey ToggleWeaponModeKey = EKeys::G;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	FKey FireJutsuKey = EKeys::F;
 
 	/** Max amount of HP the character will have on respawn */
 	UPROPERTY(EditAnywhere, Category="Damage", meta = (ClampMin = 0, ClampMax = 100))
@@ -196,7 +205,7 @@ protected:
 	float AutoSheatheMaxGroundSpeed = 10.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 2000, Units = "cm/s"))
-	float SheathedMaxWalkSpeed = 400.0f;
+	float SheathedMaxWalkSpeed = 600.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 2000, Units = "cm/s"))
 	float WeaponDrawnMaxWalkSpeed = 600.0f;
@@ -204,8 +213,8 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 4000, Units = "cm/s^2"))
 	float SheathedMaxAcceleration = 1200.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 4000, Units = "cm/s^2"))
-	float WeaponDrawnMaxAcceleration = 900.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 8000, Units = "cm/s^2"))
+	float WeaponDrawnMaxAcceleration = 4000.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 8000, Units = "cm/s^2"))
 	float SheathedBrakingDeceleration = 2000.0f;
@@ -213,12 +222,105 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Movement", meta = (ClampMin = 0, ClampMax = 8000, Units = "cm/s^2"))
 	float WeaponDrawnBrakingDeceleration = 1800.0f;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Movement|Animation")
+	float SmoothedGroundSpeed = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Movement|Animation", meta=(ClampMin=0, Units="cm/s^2"))
+	float AnimationSpeedAcceleration = 1800.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Movement|Animation", meta=(ClampMin=0, Units="cm/s^2"))
+	float AnimationSpeedDeceleration = 2600.0f;
+
 	UPROPERTY(EditAnywhere, Category="Weapon Mode")
 	UAnimMontage* DrawWeaponMontage;
 
 	/** 【Codex新增】收刀Montage */
 	UPROPERTY(EditAnywhere, Category="Weapon Mode")
 	UAnimMontage* SheatheWeaponMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Movement|Back Jump")
+	UAnimMontage* BackJumpMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Movement|Back Jump", meta=(ClampMin=0, ClampMax=2000, Units="cm/s"))
+	float BackJumpBackwardSpeed = 650.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Movement|Back Jump", meta=(ClampMin=0, ClampMax=1000, Units="cm/s"))
+	float BackJumpUpSpeed = 220.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Movement|Back Jump")
+	bool bBackJumpStopAttackMontage = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test")
+	UAnimMontage* SummonMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test")
+	TSubclassOf<ACombatSummonMarker> SummonMarkerClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test")
+	TSubclassOf<ACombatSummonShot> SummonShotClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test", meta=(ClampMin=1, ClampMax=40))
+	int32 SummonMarkerCount = 10;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test", meta=(ClampMin=0, Units="cm"))
+	float SummonMarkerRadius = 260.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test", meta=(ClampMin=0, Units="cm"))
+	float SummonTargetSearchRadius = 5000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test", meta=(ClampMin=1, ClampMax=100))
+	int32 SummonMaxTargets = 20;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test", meta=(ClampMin=0, Units="cm"))
+	float SummonShotSpawnHeight = 120.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test", meta=(ClampMin=0, Units="cm"))
+	float SummonShotSpawnRadius = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test")
+	bool bSummonSpawnBasketballWave = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test", meta=(ClampMin=1, ClampMax=100))
+	int32 SummonBasketballWaveCount = 20;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Summon Test", meta=(ClampMin=0, Units="cm"))
+	float SummonSpawnerSearchRadius = 6000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu")
+	UAnimMontage* FireJutsuMontage;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu")
+	bool bFireJutsuTriggerVfxOnCast = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX")
+	UNiagaraSystem* FireJutsuVfx;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX")
+	FName FireJutsuSocketName = TEXT("Mouth_Fire_Socket");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX")
+	FVector FireJutsuVfxRelativeLocation = FVector(20.0f, 0.0f, 0.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX")
+	FRotator FireJutsuVfxRelativeRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX", meta=(ClampMin=0.01))
+	FVector FireJutsuVfxScale = FVector(4.0f, 4.0f, 4.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX", meta=(ClampMin=1, ClampMax=24))
+	int32 FireJutsuVfxSegments = 9;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX", meta=(ClampMin=0, Units="cm"))
+	float FireJutsuVfxRange = 1600.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX", meta=(ClampMin=0, Units="cm"))
+	float FireJutsuVfxWidth = 420.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX", meta=(ClampMin=0.01))
+	float FireJutsuVfxEndScaleMultiplier = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX", meta=(ClampMin=0, Units="s"))
+	float FireJutsuVfxDuration = 1.2f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Weapon Mode|Debug", meta = (ClampMin = 0.05, ClampMax = 3.0))
 	float WeaponModeMontagePlayRate = 1.0f;
@@ -360,6 +462,14 @@ protected:
 
 	FTimerHandle DamageReactionTimer;
 
+	FTimerHandle FireJutsuVfxTimer;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> ActiveFireJutsuVfx;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UNiagaraComponent>> ActiveFireJutsuVfxSegments;
+
 	/** Copy of the mesh's transform so we can reset it after ragdoll animations */
 	FTransform MeshStartingTransform;
 
@@ -390,6 +500,8 @@ protected:
 
 	/** 【Codex新增】输入触发的拔刀/收刀切换 */
 	void ToggleWeaponModePressed();
+
+	void FireJutsuPressed();
 
 	/** BP hook to animate the camera side switch */
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")
@@ -447,10 +559,28 @@ public:
 	float GetGroundSpeed() const;
 
 	UFUNCTION(BlueprintPure, Category="Weapon Mode|Movement")
+	float GetRawGroundSpeed() const;
+
+	UFUNCTION(BlueprintPure, Category="Weapon Mode|Movement")
 	bool IsMovingOnGround() const;
 
 	UFUNCTION(BlueprintCallable, Category="Weapon Mode")
 	void SetWeaponModeMontages(UAnimMontage* NewDrawMontage, UAnimMontage* NewSheatheMontage);
+
+	UFUNCTION(BlueprintCallable, Category="Movement|Back Jump")
+	bool DoBackJump();
+
+	UFUNCTION(BlueprintCallable, Category="Summon Test")
+	bool DoSummonTest();
+
+	UFUNCTION(BlueprintCallable, Category="Fire Jutsu")
+	bool DoFireJutsu();
+
+	UFUNCTION(BlueprintCallable, Category="Fire Jutsu")
+	void TriggerFireJutsuVfx();
+
+	UFUNCTION(BlueprintCallable, Category="Fire Jutsu")
+	void StopFireJutsuVfx();
 
 	UFUNCTION(BlueprintCallable, Category="Weapon Mode|Visual")
 	void AttachWeaponToDrawnSocket();
@@ -593,6 +723,14 @@ protected:
 
 	void ClearDamageReaction();
 
+	void FindNearestBasketballs(float SearchRadius, int32 MaxTargets, TArray<ACombatFlyingBasketball*>& OutBasketballs) const;
+
+	ACombatBasketballSpawner* FindNearestBasketballSpawner(float SearchRadius) const;
+
+	void SpawnSummonMarkers();
+
+	void FireSummonShotAt(AActor* TargetActor, int32 ShotIndex, int32 ShotCount);
+
 	/** Blueprint handler to play damage received effects */
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")
 	void ReceivedDamage(float Damage, const FVector& ImpactPoint, const FVector& DamageDirection);
@@ -601,6 +739,8 @@ protected:
 
 	/** Initialization */
 	virtual void BeginPlay() override;
+
+	virtual void Tick(float DeltaSeconds) override;
 
 	/** Cleanup */
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

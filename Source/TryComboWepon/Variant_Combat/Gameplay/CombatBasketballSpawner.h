@@ -42,6 +42,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Basketball Spawner", meta=(ClampMin=0.05, Units="s"))
 	float SpawnInterval = 1.5f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Basketball Spawner", meta=(ClampMin=1, ClampMax=100))
+	int32 BasketballsPerSpawn = 1;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Basketball Spawner", meta=(ClampMin=1, Units="cm"))
 	float SpawnRadius = 900.0f;
 
@@ -56,6 +59,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Basketball Spawner")
 	ACombatFlyingBasketball* SpawnBasketball();
+
+	UFUNCTION(BlueprintCallable, Category="Basketball Spawner")
+	void SpawnBasketballWave(int32 Count);
 
 	UFUNCTION(BlueprintCallable, Category="Basketball Spawner")
 	void StartSpawning();
