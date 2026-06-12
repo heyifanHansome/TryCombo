@@ -8,6 +8,7 @@
 
 class UInputMappingContext;
 class ACombatCharacter;
+class UCombatStartMenuWidget;
 
 /**
  *  Simple Player Controller for a third person combat game
@@ -44,6 +45,15 @@ protected:
 	/** Character class to respawn when the possessed pawn is destroyed */
 	UPROPERTY(EditAnywhere, Category="Respawn")
 	TSubclassOf<ACombatCharacter> CharacterClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Game Start")
+	bool bShowStartMenuOnBeginPlay = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Game Start")
+	TSubclassOf<UCombatStartMenuWidget> StartMenuWidgetClass;
+
+	UPROPERTY()
+	TObjectPtr<UCombatStartMenuWidget> StartMenuWidget;
 
 	/** Transform to respawn the character at. Can be set to create checkpoints */
 	FTransform RespawnTransform;

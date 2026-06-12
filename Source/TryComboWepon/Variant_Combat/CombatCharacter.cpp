@@ -28,6 +28,7 @@
 #include "Gameplay/CombatFlyingBasketball.h"
 #include "Gameplay/CombatSummonMarker.h"
 #include "Gameplay/CombatSummonShot.h"
+#include "Kismet/GameplayStatics.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "UObject/ConstructorHelpers.h"
@@ -370,17 +371,26 @@ bool ACombatCharacter::DoFireJutsu()
 		bPlayedMontage = true;
 	}
 
+	if (FireJutsuSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, FireJutsuSound, GetActorLocation(), FireJutsuSoundVolume, FireJutsuSoundPitch);
+	}
+
 	if (bFireJutsuTriggerVfxOnCast)
 	{
 		TriggerFireJutsuVfx();
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("FireJutsu cast: Montage=%d VFX=%d TriggerOnCast=%d"),
+	FireJutsuAttachDirectionEndTime = GetWorld()->GetTimeSeconds() + FMath::Max(FireJutsuVfxDuration, 0.25f);
+	AlignFireJutsuAttachedVfxToCharacterDirection();
+
+	UE_LOG(LogTemp, Warning, TEXT("FireJutsu cast: Montage=%d Sound=%d VFX=%d TriggerOnCast=%d"),
 		bPlayedMontage ? 1 : 0,
+		FireJutsuSound ? 1 : 0,
 		FireJutsuVfx ? 1 : 0,
 		bFireJutsuTriggerVfxOnCast ? 1 : 0);
 
-	return bPlayedMontage || FireJutsuVfx != nullptr;
+	return bPlayedMontage || FireJutsuSound != nullptr || FireJutsuVfx != nullptr;
 }
 
 void ACombatCharacter::TriggerFireJutsuVfx()
@@ -408,13 +418,17 @@ void ACombatCharacter::TriggerFireJutsuVfx()
 	const FTransform SourceTransform = bHasFireSocket
 		? GetMesh()->GetSocketTransform(FireJutsuSocketName, RTS_World)
 		: GetActorTransform();
+	const FRotator BaseAimRotation = bFireJutsuUseControllerAim && Controller
+		? Controller->GetControlRotation()
+		: (bHasFireSocket ? SourceTransform.GetRotation().Rotator() : GetActorRotation());
+	const FRotator SourceRotation = BaseAimRotation + FireJutsuVfxRelativeRotation;
+	const FRotationMatrix SourceRotationMatrix(SourceRotation);
+	const FVector Forward = SourceRotationMatrix.GetUnitAxis(EAxis::X).GetSafeNormal();
+	const FVector Right = SourceRotationMatrix.GetUnitAxis(EAxis::Y).GetSafeNormal();
+	const FVector Up = SourceRotationMatrix.GetUnitAxis(EAxis::Z).GetSafeNormal();
 	const FVector SourceLocation = bHasFireSocket
 		? SourceTransform.TransformPosition(FireJutsuVfxRelativeLocation)
-		: GetActorLocation() + GetActorForwardVector() * 120.0f + FVector::UpVector * 80.0f;
-	const FRotator SourceRotation = GetActorRotation() + FireJutsuVfxRelativeRotation;
-	const FVector Forward = GetActorForwardVector().GetSafeNormal();
-	const FVector Right = GetActorRightVector().GetSafeNormal();
-	const FVector Up = FVector::UpVector;
+		: GetActorLocation() + Forward * 120.0f + FVector::UpVector * 80.0f;
 	const int32 SegmentCount = FMath::Max(FireJutsuVfxSegments, 1);
 
 	if (bHasFireSocket)
@@ -428,7 +442,7 @@ void ACombatCharacter::TriggerFireJutsuVfx()
 			true,
 			true);
 
-		UE_LOG(LogTemp, Warning, TEXT("FireJutsu VFX spawned from socket '%s' using actor forward direction."), *FireJutsuSocketName.ToString());
+		UE_LOG(LogTemp, Warning, TEXT("FireJutsu VFX spawned from socket '%s' using dynamic aim rotation."), *FireJutsuSocketName.ToString());
 	}
 	else
 	{
@@ -446,7 +460,12 @@ void ACombatCharacter::TriggerFireJutsuVfx()
 
 	if (ActiveFireJutsuVfx)
 	{
+		ActiveFireJutsuVfx->SetWorldRotation(SourceRotation);
 		ActiveFireJutsuVfx->SetRelativeScale3D(FireJutsuVfxScale);
+		ActiveFireJutsuVfx->SetVariableVec3(TEXT("User.FireJutsuDirection"), Forward);
+		ActiveFireJutsuVfx->SetVariableVec3(TEXT("User.FireJutsuForward"), Forward);
+		ActiveFireJutsuVfx->SetVariableVec3(TEXT("User.FireJutsuRight"), Right);
+		ActiveFireJutsuVfx->SetVariableVec3(TEXT("User.FireJutsuUp"), Up);
 	}
 	else
 	{
@@ -475,6 +494,11 @@ void ACombatCharacter::TriggerFireJutsuVfx()
 
 		if (SegmentVfx)
 		{
+			SegmentVfx->SetWorldRotation(SourceRotation);
+			SegmentVfx->SetVariableVec3(TEXT("User.FireJutsuDirection"), Forward);
+			SegmentVfx->SetVariableVec3(TEXT("User.FireJutsuForward"), Forward);
+			SegmentVfx->SetVariableVec3(TEXT("User.FireJutsuRight"), Right);
+			SegmentVfx->SetVariableVec3(TEXT("User.FireJutsuUp"), Up);
 			ActiveFireJutsuVfxSegments.Add(SegmentVfx);
 		}
 	}
@@ -509,6 +533,43 @@ void ACombatCharacter::StopFireJutsuVfx()
 	}
 
 	ActiveFireJutsuVfxSegments.Reset();
+}
+
+void ACombatCharacter::AlignFireJutsuAttachedVfxToCharacterDirection()
+{
+	USkeletalMeshComponent* CharacterMesh = GetMesh();
+	if (!CharacterMesh)
+	{
+		return;
+	}
+
+	FRotator CharacterDirection = Controller ? Controller->GetControlRotation() : GetActorRotation();
+	CharacterDirection.Pitch = 0.0f;
+	CharacterDirection.Yaw += FireJutsuAttachedVfxYawOffset;
+	CharacterDirection.Roll = 0.0f;
+
+	const FVector Forward = CharacterDirection.Vector();
+
+	TArray<USceneComponent*> AttachedVfxChildren;
+	CharacterMesh->GetChildrenComponents(true, AttachedVfxChildren);
+
+	for (USceneComponent* Child : AttachedVfxChildren)
+	{
+		UNiagaraComponent* NiagaraChild = Cast<UNiagaraComponent>(Child);
+		if (!NiagaraChild)
+		{
+			continue;
+		}
+
+		if (NiagaraChild->GetAttachSocketName() != FireJutsuSocketName)
+		{
+			continue;
+		}
+
+		NiagaraChild->SetWorldRotation(CharacterDirection);
+		NiagaraChild->SetVariableVec3(TEXT("User.FireJutsuDirection"), Forward);
+		NiagaraChild->SetVariableVec3(TEXT("User.FireJutsuForward"), Forward);
+	}
 }
 
 void ACombatCharacter::BeginComboInputWindow(float WindowDuration)
@@ -1409,6 +1470,11 @@ void ACombatCharacter::Tick(float DeltaSeconds)
 	const float TargetGroundSpeed = GetRawGroundSpeed();
 	const float InterpSpeed = TargetGroundSpeed > SmoothedGroundSpeed ? AnimationSpeedAcceleration : AnimationSpeedDeceleration;
 	SmoothedGroundSpeed = FMath::FInterpConstantTo(SmoothedGroundSpeed, TargetGroundSpeed, DeltaSeconds, InterpSpeed);
+
+	if (GetWorld() && GetWorld()->GetTimeSeconds() <= FireJutsuAttachDirectionEndTime)
+	{
+		AlignFireJutsuAttachedVfxToCharacterDirection();
+	}
 }
 
 void ACombatCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)

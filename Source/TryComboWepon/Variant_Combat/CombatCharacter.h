@@ -20,6 +20,7 @@ class UCombatWeaponCollisionComponent;
 class UWidgetComponent;
 class UNiagaraComponent;
 class UNiagaraSystem;
+class USoundBase;
 class ACombatFlyingBasketball;
 class ACombatBasketballSpawner;
 class ACombatSummonMarker;
@@ -289,6 +290,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu")
 	UAnimMontage* FireJutsuMontage;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|Audio")
+	TObjectPtr<USoundBase> FireJutsuSound;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|Audio", meta=(ClampMin=0.0, UIMin=0.0, UIMax=2.0))
+	float FireJutsuSoundVolume = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|Audio", meta=(ClampMin=0.1, UIMin=0.1, UIMax=3.0))
+	float FireJutsuSoundPitch = 1.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu")
 	bool bFireJutsuTriggerVfxOnCast = true;
 
@@ -303,6 +313,12 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX")
 	FRotator FireJutsuVfxRelativeRotation = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX")
+	bool bFireJutsuUseControllerAim = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX", meta=(Units="deg"))
+	float FireJutsuAttachedVfxYawOffset = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX", meta=(ClampMin=0.01))
 	FVector FireJutsuVfxScale = FVector(4.0f, 4.0f, 4.0f);
@@ -470,6 +486,8 @@ protected:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UNiagaraComponent>> ActiveFireJutsuVfxSegments;
 
+	float FireJutsuAttachDirectionEndTime = 0.0f;
+
 	/** Copy of the mesh's transform so we can reset it after ragdoll animations */
 	FTransform MeshStartingTransform;
 
@@ -581,6 +599,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Fire Jutsu")
 	void StopFireJutsuVfx();
+
+	UFUNCTION(BlueprintCallable, Category="Fire Jutsu")
+	void AlignFireJutsuAttachedVfxToCharacterDirection();
 
 	UFUNCTION(BlueprintCallable, Category="Weapon Mode|Visual")
 	void AttachWeaponToDrawnSocket();

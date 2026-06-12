@@ -8,6 +8,7 @@
 #include "Components/ArrowComponent.h"
 #include "TimerManager.h"
 #include "CombatEnemy.h"
+#include "Variant_Combat/CombatGameMode.h"
 
 ACombatEnemySpawner::ACombatEnemySpawner()
 {
@@ -51,6 +52,14 @@ void ACombatEnemySpawner::EndPlay(EEndPlayReason::Type EndPlayReason)
 
 void ACombatEnemySpawner::SpawnEnemy()
 {
+	if (const ACombatGameMode* CombatGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACombatGameMode>() : nullptr)
+	{
+		if (!CombatGameMode->IsCombatAIEnabled())
+		{
+			return;
+		}
+	}
+
 	// ensure the enemy class is valid
 	if (IsValid(EnemyClass))
 	{
@@ -107,6 +116,14 @@ void ACombatEnemySpawner::ToggleInteraction(AActor* ActivationInstigator)
 
 void ACombatEnemySpawner::ActivateInteraction(AActor* ActivationInstigator)
 {
+	if (const ACombatGameMode* CombatGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACombatGameMode>() : nullptr)
+	{
+		if (!CombatGameMode->IsCombatAIEnabled())
+		{
+			return;
+		}
+	}
+
 	// ensure we're only activated once, and only if we've deferred enemy spawning
 	if (bHasBeenActivated || bShouldSpawnEnemiesImmediately)
 	{

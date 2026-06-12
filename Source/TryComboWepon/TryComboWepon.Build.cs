@@ -19,7 +19,7 @@ public class TryComboWepon : ModuleRules
 			"GameplayStateTreeModule",
 			"UMG",
 			"Slate",
-			"Niagara"
+			"Niagara","SlateCore"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

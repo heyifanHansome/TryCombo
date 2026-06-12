@@ -7,6 +7,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerStart.h"
 #include "CombatCharacter.h"
+#include "Variant_Combat/UI/CombatStartMenuWidget.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "Blueprint/UserWidget.h"
@@ -27,6 +28,8 @@ ACombatPlayerController::ACombatPlayerController()
 	{
 		DefaultMappingContexts.AddUnique(CombatInputContext.Object);
 	}
+
+	StartMenuWidgetClass = UCombatStartMenuWidget::StaticClass();
 }
 
 void ACombatPlayerController::BeginPlay()
@@ -50,6 +53,18 @@ void ACombatPlayerController::BeginPlay()
 
 		}
 
+	}
+
+	if (bShowStartMenuOnBeginPlay && IsLocalPlayerController() && StartMenuWidgetClass)
+	{
+		StartMenuWidget = CreateWidget<UCombatStartMenuWidget>(this, StartMenuWidgetClass);
+		if (StartMenuWidget)
+		{
+			StartMenuWidget->AddToPlayerScreen(10);
+			SetInputMode(FInputModeUIOnly());
+			SetShowMouseCursor(true);
+			UGameplayStatics::SetGamePaused(this, true);
+		}
 	}
 }
 
