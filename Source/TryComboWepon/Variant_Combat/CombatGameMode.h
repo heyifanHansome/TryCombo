@@ -36,7 +36,10 @@ public:
 protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Game Start")
-	bool bEnableCombatAI = true;
+	bool bEnableCombatAI = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Game Start")
+	bool bCombatGameStarted = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Game Start|Music")
 	TArray<FCombatMusicOption> BackgroundMusicOptions;
@@ -51,6 +54,14 @@ protected:
 	TObjectPtr<UAudioComponent> ActiveBackgroundMusic;
 
 public:
+
+	virtual void BeginPlay() override;
+
+	UFUNCTION(BlueprintCallable, Category="Game Start")
+	void StartCombatGame(bool bEnableAI, int32 MusicIndex);
+
+	UFUNCTION(BlueprintPure, Category="Game Start")
+	bool HasCombatGameStarted() const { return bCombatGameStarted; }
 
 	UFUNCTION(BlueprintCallable, Category="Game Start|AI")
 	void SetCombatAIEnabled(bool bEnabled);
@@ -69,4 +80,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Game Start|Music")
 	int32 GetDefaultBackgroundMusicIndex() const { return DefaultBackgroundMusicIndex; }
+
+protected:
+
+	void EnsureDefaultMusicOptions();
+	void ApplyCombatAIStateToWorld();
 };

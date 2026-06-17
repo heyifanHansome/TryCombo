@@ -14,6 +14,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Variant_Combat/CombatGameMode.h"
 
 ACombatFlyingBasketball::ACombatFlyingBasketball()
 {
@@ -62,6 +63,15 @@ void ACombatFlyingBasketball::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (const ACombatGameMode* CombatGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACombatGameMode>() : nullptr)
+	{
+		if (!CombatGameMode->IsCombatAIEnabled())
+		{
+			Destroy();
+			return;
+		}
+	}
+
 	CurrentHP = MaxHP;
 	ConfigureCollision();
 	Collision->OnComponentBeginOverlap.AddUniqueDynamic(this, &ACombatFlyingBasketball::HandleOverlap);
@@ -100,6 +110,15 @@ void ACombatFlyingBasketball::ConfigureCollision()
 
 void ACombatFlyingBasketball::LaunchAtTarget(AActor* NewTargetActor)
 {
+	if (const ACombatGameMode* CombatGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACombatGameMode>() : nullptr)
+	{
+		if (!CombatGameMode->IsCombatAIEnabled())
+		{
+			Destroy();
+			return;
+		}
+	}
+
 	TargetActor = NewTargetActor;
 	if (!TargetActor)
 	{
@@ -263,6 +282,15 @@ void ACombatFlyingBasketball::HandleOverlap(UPrimitiveComponent* OverlappedCompo
 	if (bDead || !OtherActor || OtherActor == this)
 	{
 		return;
+	}
+
+	if (const ACombatGameMode* CombatGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACombatGameMode>() : nullptr)
+	{
+		if (!CombatGameMode->IsCombatAIEnabled())
+		{
+			Destroy();
+			return;
+		}
 	}
 
 	if (TryTriggerPhotoTarget(OtherActor))

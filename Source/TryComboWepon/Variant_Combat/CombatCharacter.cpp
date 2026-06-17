@@ -26,6 +26,7 @@
 #include "EngineUtils.h"
 #include "Gameplay/CombatBasketballSpawner.h"
 #include "Gameplay/CombatFlyingBasketball.h"
+#include "Gameplay/CombatShadowClone.h"
 #include "Gameplay/CombatSummonMarker.h"
 #include "Gameplay/CombatSummonShot.h"
 #include "Kismet/GameplayStatics.h"
@@ -116,6 +117,7 @@ ACombatCharacter::ACombatCharacter()
 
 	SummonMarkerClass = ACombatSummonMarker::StaticClass();
 	SummonShotClass = ACombatSummonShot::StaticClass();
+	ShadowCloneClass = ACombatShadowClone::StaticClass();
 
 	// set the player tag
 	Tags.Add(FName("Player"));
@@ -170,6 +172,11 @@ void ACombatCharacter::ToggleWeaponModePressed()
 void ACombatCharacter::FireJutsuPressed()
 {
 	DoFireJutsu();
+}
+
+void ACombatCharacter::ShadowClonePressed()
+{
+	DoShadowClone();
 }
 
 void ACombatCharacter::DoMove(float Right, float Forward)
@@ -391,6 +398,49 @@ bool ACombatCharacter::DoFireJutsu()
 		bFireJutsuTriggerVfxOnCast ? 1 : 0);
 
 	return bPlayedMontage || FireJutsuSound != nullptr || FireJutsuVfx != nullptr;
+}
+
+bool ACombatCharacter::DoShadowClone()
+{
+	if (CurrentHP <= 0.0f || !GetWorld() || !ShadowCloneClass)
+	{
+		return false;
+	}
+
+	const float CurrentTime = GetWorld()->GetTimeSeconds();
+	if (CurrentTime - LastShadowCloneTime < ShadowCloneCooldown)
+	{
+		return false;
+	}
+
+	LastShadowCloneTime = CurrentTime;
+
+	const int32 SafeCloneCount = FMath::Max(1, ShadowCloneCount);
+	const FVector Forward = GetActorForwardVector();
+	const FVector Right = GetActorRightVector();
+	const FVector BaseLocation = GetActorLocation() + Forward * ShadowCloneForwardOffset;
+	const float CenterIndex = (SafeCloneCount - 1) * 0.5f;
+
+	for (int32 Index = 0; Index < SafeCloneCount; ++Index)
+	{
+		const float SideIndex = Index - CenterIndex;
+		FVector SpawnLocation = BaseLocation + Right * (SideIndex * ShadowCloneSideSpacing);
+		SpawnLocation.Z = GetActorLocation().Z;
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.Instigator = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		ACombatShadowClone* Clone = GetWorld()->SpawnActor<ACombatShadowClone>(ShadowCloneClass, SpawnLocation, GetActorRotation(), SpawnParams);
+		if (Clone)
+		{
+			Clone->LifeSeconds = ShadowCloneLifeSeconds;
+			Clone->InitializeFromCharacter(this);
+		}
+	}
+
+	return true;
 }
 
 void ACombatCharacter::TriggerFireJutsuVfx()
@@ -1718,6 +1768,11 @@ void ACombatCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	if (FireJutsuKey.IsValid())
 	{
 		PlayerInputComponent->BindKey(FireJutsuKey, IE_Pressed, this, &ACombatCharacter::FireJutsuPressed);
+	}
+
+	if (ShadowCloneKey.IsValid())
+	{
+		PlayerInputComponent->BindKey(ShadowCloneKey, IE_Pressed, this, &ACombatCharacter::ShadowClonePressed);
 	}
 }
 

@@ -77,6 +77,9 @@ public:
 	/** Updates the character respawn transform */
 	void SetRespawnTransform(const FTransform& NewRespawn);
 
+	UFUNCTION(BlueprintCallable, Category="Game Start")
+	void StartCombatFromMenu(bool bEnableAI, int32 MusicIndex);
+
 protected:
 
 	/** Called if the possessed pawn is destroyed */

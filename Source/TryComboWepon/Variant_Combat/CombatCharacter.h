@@ -25,6 +25,7 @@ class ACombatFlyingBasketball;
 class ACombatBasketballSpawner;
 class ACombatSummonMarker;
 class ACombatSummonShot;
+class ACombatShadowClone;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCombatCharacter, Log, All);
 
@@ -110,6 +111,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
 	FKey FireJutsuKey = EKeys::F;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Input")
+	FKey ShadowCloneKey = EKeys::Q;
 
 	/** Max amount of HP the character will have on respawn */
 	UPROPERTY(EditAnywhere, Category="Damage", meta = (ClampMin = 0, ClampMax = 100))
@@ -301,6 +305,26 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu")
 	bool bFireJutsuTriggerVfxOnCast = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Shadow Clone")
+	TSubclassOf<ACombatShadowClone> ShadowCloneClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Shadow Clone", meta=(ClampMin=1, ClampMax=12))
+	int32 ShadowCloneCount = 3;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Shadow Clone", meta=(ClampMin=0, Units="cm"))
+	float ShadowCloneSideSpacing = 130.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Shadow Clone", meta=(Units="cm"))
+	float ShadowCloneForwardOffset = 35.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Shadow Clone", meta=(ClampMin=0.1, Units="s"))
+	float ShadowCloneLifeSeconds = 2.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Shadow Clone", meta=(ClampMin=0, Units="s"))
+	float ShadowCloneCooldown = 1.0f;
+
+	float LastShadowCloneTime = -1000.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Fire Jutsu|VFX")
 	UNiagaraSystem* FireJutsuVfx;
@@ -521,6 +545,8 @@ protected:
 
 	void FireJutsuPressed();
 
+	void ShadowClonePressed();
+
 	/** BP hook to animate the camera side switch */
 	UFUNCTION(BlueprintImplementableEvent, Category="Combat")
 	void BP_ToggleCamera();
@@ -593,6 +619,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Fire Jutsu")
 	bool DoFireJutsu();
+
+	UFUNCTION(BlueprintCallable, Category="Shadow Clone")
+	bool DoShadowClone();
 
 	UFUNCTION(BlueprintCallable, Category="Fire Jutsu")
 	void TriggerFireJutsuVfx();

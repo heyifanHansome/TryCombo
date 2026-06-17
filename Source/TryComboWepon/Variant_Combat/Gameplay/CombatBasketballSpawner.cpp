@@ -4,6 +4,7 @@
 #include "CombatFlyingBasketball.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "Variant_Combat/CombatGameMode.h"
 
 ACombatBasketballSpawner::ACombatBasketballSpawner()
 {
@@ -32,6 +33,15 @@ void ACombatBasketballSpawner::StartSpawning()
 	if (!GetWorld())
 	{
 		return;
+	}
+
+	if (const ACombatGameMode* CombatGameMode = GetWorld()->GetAuthGameMode<ACombatGameMode>())
+	{
+		if (!CombatGameMode->IsCombatAIEnabled())
+		{
+			StopSpawning();
+			return;
+		}
 	}
 
 	GetWorld()->GetTimerManager().SetTimer(SpawnTimer, this, &ACombatBasketballSpawner::SpawnBasketballFromTimer, SpawnInterval, true, 0.0f);
@@ -100,6 +110,15 @@ ACombatFlyingBasketball* ACombatBasketballSpawner::SpawnBasketball()
 		return nullptr;
 	}
 
+	if (const ACombatGameMode* CombatGameMode = GetWorld()->GetAuthGameMode<ACombatGameMode>())
+	{
+		if (!CombatGameMode->IsCombatAIEnabled())
+		{
+			StopSpawning();
+			return nullptr;
+		}
+	}
+
 	CleanupDeadBasketballs();
 	if (MaxLiveBasketballs > 0 && LiveBasketballs.Num() >= MaxLiveBasketballs)
 	{
@@ -129,6 +148,14 @@ ACombatFlyingBasketball* ACombatBasketballSpawner::SpawnBasketball()
 
 void ACombatBasketballSpawner::SpawnBasketballWave(int32 Count)
 {
+	if (const ACombatGameMode* CombatGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<ACombatGameMode>() : nullptr)
+	{
+		if (!CombatGameMode->IsCombatAIEnabled())
+		{
+			return;
+		}
+	}
+
 	const int32 SafeCount = FMath::Max(1, Count);
 	for (int32 Index = 0; Index < SafeCount; ++Index)
 	{
